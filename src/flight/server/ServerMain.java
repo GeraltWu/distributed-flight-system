@@ -1,6 +1,7 @@
 package flight.server;
 
 import java.io.IOException;
+import java.nio.file.Paths;
 
 /** 服务端启动入口。 */
 public final class ServerMain {
@@ -25,10 +26,11 @@ public final class ServerMain {
         }
 
         try {
-            FlightServer server = new FlightServer(port, FlightService.createDefault());
+            FlightService service = FlightService.load(Paths.get("data", "flights.tsv"));
+            FlightServer server = new FlightServer(port, service);
             server.run();
         } catch (IOException exception) {
-            System.out.println("服务端启动或接收失败：" + exception.getMessage());
+            System.out.println("服务端启动、读取数据或接收失败：" + exception.getMessage());
         }
     }
 

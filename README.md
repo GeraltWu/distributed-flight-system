@@ -6,6 +6,8 @@
 
 ```text
 distributed-flight-system/
+├─ data/
+│  └─ flights.tsv                    # 服务端启动时读取的航班数据
 └─ src/
    └─ flight/
       ├─ protocol/
@@ -33,6 +35,7 @@ distributed-flight-system/
 - `flight.protocol`：客户端和服务端共享的协议常量、消息结构及字节编解码，不保存业务状态。
 - `flight.server`：维护航班数据，执行业务操作，接收请求、发送回复并处理监控登记和回复历史。
 - `flight.client`：提供控制台界面，生成请求编号，发送请求、接收回复并显示结果。
+- `data/flights.tsv`：保存初始航班数据。服务端启动时载入内存，运行期间的修改不会写回文件。
 
 服务端是航班数据的唯一维护者。客户端可以检查用户输入，但所有业务参数仍由服务端重新验证。
 
@@ -42,11 +45,11 @@ distributed-flight-system/
 
 ## 编译和运行
 
-在项目根目录使用 PowerShell 编译：
+在项目根目录使用 PowerShell 编译和运行。服务端会从相对路径 `data/flights.tsv` 读取数据：
 
 ```powershell
 New-Item -ItemType Directory -Force out
-javac --release 17 -d out (Get-ChildItem -Recurse src -Filter *.java).FullName
+javac --release 17 -encoding UTF-8 -d out (Get-ChildItem -Recurse src -Filter *.java).FullName
 ```
 
 先启动服务端：
