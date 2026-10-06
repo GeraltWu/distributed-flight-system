@@ -94,6 +94,9 @@ public final class MessageCodec {
                             + ", bodyLength="
                             + bodyLength);
         }
+        if (messageType == Protocol.MessageType.ACKNOWLEDGEMENT && bodyLength != 0) {
+            throw new ProtocolException("Acknowledgement body must be empty");
+        }
 
         int bodyStart = offset + Protocol.BODY_OFFSET;
         byte[] body = Arrays.copyOfRange(datagram, bodyStart, bodyStart + bodyLength);

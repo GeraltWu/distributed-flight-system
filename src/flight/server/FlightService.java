@@ -21,7 +21,7 @@ final class FlightService {
         List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
         if (lines.isEmpty()
                 || !lines.get(0).equals("id\tsource\tdestination\tdepartureUtc\tfare\tavailableSeats")) {
-            throw new IOException("航班数据缺少正确的表头");
+            throw new IOException("Flight data file has an invalid or missing header");
         }
 
         FlightService service = new FlightService();
@@ -34,7 +34,7 @@ final class FlightService {
             int lineNumber = index + 1;
             String[] fields = line.split("\t", -1);
             if (fields.length != 6) {
-                throw invalidLine(lineNumber, "应有 6 个字段");
+                throw invalidLine(lineNumber, "expected 6 fields");
             }
 
             try {
@@ -47,28 +47,28 @@ final class FlightService {
 
                 // 这些限制与协议的业务字段范围一致，避免载入无法正常传输的数据。
                 if (id <= 0) {
-                    throw invalidLine(lineNumber, "航班号必须为正数");
+                    throw invalidLine(lineNumber, "flight ID must be positive");
                 }
-                validatePlace(source, "出发地", lineNumber);
-                validatePlace(destination, "目的地", lineNumber);
+                validatePlace(source, "source", lineNumber);
+                validatePlace(destination, "destination", lineNumber);
                 if (!Float.isFinite(fare) || fare < 0) {
-                    throw invalidLine(lineNumber, "票价必须是有限的非负数");
+                    throw invalidLine(lineNumber, "fare must be finite and non-negative");
                 }
                 if (availableSeats < 0) {
-                    throw invalidLine(lineNumber, "剩余座位不能为负数");
+                    throw invalidLine(lineNumber, "available seats cannot be negative");
                 }
 
                 Flight flight = new Flight(id, source, destination, departure, fare, availableSeats);
                 if (service.flights.putIfAbsent(id, flight) != null) {
-                    throw invalidLine(lineNumber, "航班号重复：" + id);
+                    throw invalidLine(lineNumber, "duplicate flight ID: " + id);
                 }
             } catch (NumberFormatException | java.time.format.DateTimeParseException exception) {
-                throw invalidLine(lineNumber, "数字或时间格式错误");
+                throw invalidLine(lineNumber, "invalid number or timestamp");
             }
         }
 
         if (service.flights.isEmpty()) {
-            throw new IOException("航班数据中没有记录");
+            throw new IOException("Flight data file contains no records");
         }
         return service;
     }
@@ -80,11 +80,11 @@ final class FlightService {
     private static void validatePlace(String value, String name, int lineNumber) throws IOException {
         int byteLength = value.getBytes(StandardCharsets.UTF_8).length;
         if (byteLength < 1 || byteLength > 255) {
-            throw invalidLine(lineNumber, name + "必须占 1 至 255 个 UTF-8 字节");
+            throw invalidLine(lineNumber, name + " must occupy 1 to 255 UTF-8 bytes");
         }
     }
 
     private static IOException invalidLine(int lineNumber, String reason) {
-        return new IOException("航班数据第 " + lineNumber + " 行无效：" + reason);
+        return new IOException("Invalid flight data at line " + lineNumber + ": " + reason);
     }
 }

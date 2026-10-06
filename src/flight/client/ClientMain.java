@@ -33,7 +33,7 @@ public final class ClientMain {
             if (serverPort < 1 || serverPort > 65_535) {
                 throw new NumberFormatException();
             }
-        } catch (UnknownHostException | NumberFormatException exception) {
+        } catch (UnknownHostException | IllegalArgumentException exception) {
             printUsage();
             return;
         }
@@ -41,7 +41,7 @@ public final class ClientMain {
         try (FlightClient client = new FlightClient(serverAddress, serverPort)) {
             runMenu(client);
         } catch (IOException exception) {
-            System.out.println("客户端启动失败：" + exception.getMessage());
+            System.out.println("Client startup failed: " + exception.getMessage());
         }
     }
 
@@ -49,14 +49,14 @@ public final class ClientMain {
         Scanner scanner = new Scanner(System.in);
 
         while (true) {
-            System.out.print("请输入航班号查询详情，输入 0 退出：");
+            System.out.print("Enter a flight ID to view details, or 0 to exit: ");
             String input = scanner.nextLine().trim();
 
             int flightId;
             try {
                 flightId = Integer.parseInt(input);
             } catch (NumberFormatException exception) {
-                System.out.println("请输入整数航班号。");
+                System.out.println("Please enter an integer flight ID.");
                 continue;
             }
 
@@ -66,18 +66,18 @@ public final class ClientMain {
 
             try {
                 FlightClient.FlightDetails details = client.queryDetails(flightId);
-                System.out.println("起飞时间："
+                System.out.println("Departure time: "
                         + UTC_FORMAT.format(Instant.ofEpochSecond(details.departureUtcSeconds())));
-                System.out.printf("票价：%.2f%n", details.fare());
-                System.out.println("剩余座位：" + details.availableSeats());
+                System.out.printf("Fare: %.2f%n", details.fare());
+                System.out.println("Available seats: " + details.availableSeats());
             } catch (IOException | ProtocolException exception) {
-                System.out.println("查询失败：" + exception.getMessage());
+                System.out.println("Query failed: " + exception.getMessage());
             }
         }
     }
 
     private static void printUsage() {
         System.out.println(
-                "用法：java -cp out flight.client.ClientMain <server-host> <server-port>");
+                "Usage: java -cp out flight.client.ClientMain <server-host> <server-port>");
     }
 }

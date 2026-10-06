@@ -33,6 +33,7 @@ public final class Protocol {
         public static final int REQUEST = 1;
         public static final int REPLY = 2;
         public static final int EVENT = 3;
+        public static final int ACKNOWLEDGEMENT = 4;
     }
 
     public static final class Operation {
@@ -63,6 +64,7 @@ public final class Protocol {
     public static boolean isKnownMessageType(int messageType) {
         return messageType == MessageType.REQUEST
                 || messageType == MessageType.REPLY
-                || messageType == MessageType.EVENT;
+                || messageType == MessageType.EVENT
+                || messageType == MessageType.ACKNOWLEDGEMENT;
     }
 }

@@ -14,15 +14,15 @@ distributed-flight-system/
       │  ├─ Protocol.java
       │  ├─ Message.java
       │  ├─ MessageCodec.java
-      │  ├─ ProtocolException.java
-      │  └─ InvocationMode.java       # 后续实现两种调用语义时添加
+      │  └─ ProtocolException.java
       ├─ server/
       │  ├─ ServerMain.java
       │  ├─ FlightServer.java
       │  ├─ Flight.java
       │  ├─ FlightService.java
+      │  ├─ InvocationMode.java
       │  ├─ MonitorRegistry.java      # 后续实现监控时添加
-      │  └─ ReplyHistory.java         # 后续实现 at-most-once 时添加
+      │  └─ ReplyHistory.java
       └─ client/
          ├─ ClientMain.java
          └─ FlightClient.java
@@ -41,7 +41,7 @@ distributed-flight-system/
 
 ## 当前功能
 
-目前已实现基本 UDP 客户端、服务端和 `DETAILS` 航班详情查询。客户端可以输入航班号，查询起飞时间、票价和剩余座位；不存在的航班会收到 `NOT_FOUND` 错误。其他操作、超时重传、两种调用语义和监控将在后续阶段实现。
+目前已实现基本 UDP 客户端、服务端和 `DETAILS` 航班详情查询。客户端可以输入航班号，查询起飞时间、票价和剩余座位；不存在的航班会收到 `NOT_FOUND` 错误。客户端会以 800 毫秒为间隔最多发送 4 次请求，服务端启动时可选择 `at-least-once` 或 `at-most-once`。至多一次模式使用回复 history 去重，客户端确认与 60 秒 TTL 负责清理缓存。其他业务操作和监控将在后续阶段实现。
 
 ## 编译和运行
 
@@ -55,7 +55,9 @@ javac --release 17 -encoding UTF-8 -d out (Get-ChildItem -Recurse src -Filter *.
 先启动服务端：
 
 ```powershell
-java -cp out flight.server.ServerMain 5000
+java -cp out flight.server.ServerMain 5000 at-most-once
+
+java -cp out flight.server.ServerMain 5000 at-least-once
 ```
 
 再打开另一个终端启动客户端：
@@ -66,4 +68,4 @@ java -cp out flight.client.ClientMain 127.0.0.1 5000
 java -cp out flight.client.ClientMain 120.26.249.221 5000
 ```
 
-跨电脑运行时，把 `127.0.0.1` 换成服务端电脑的 IP 地址 `120.26.249.221`。
+服务端的最后一个参数选择调用语义，客户端命令不变。跨电脑运行时，把 `127.0.0.1` 换成服务端电脑的 IP 地址 `120.26.249.221`。

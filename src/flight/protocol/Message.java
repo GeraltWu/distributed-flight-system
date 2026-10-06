@@ -65,6 +65,20 @@ public final class Message {
                 body);
     }
 
+    /** 确认已收到一条回复，三个匹配字段均从回复复制。 */
+    public static Message acknowledgementTo(Message reply) {
+        Objects.requireNonNull(reply, "reply");
+        if (reply.messageType != Protocol.MessageType.REPLY) {
+            throw new IllegalArgumentException("An acknowledgement requires a reply");
+        }
+        return new Message(
+                Protocol.MessageType.ACKNOWLEDGEMENT,
+                reply.operation,
+                reply.clientId,
+                reply.requestId,
+                new byte[0]);
+    }
+
     /** 为已有的 MONITOR 登记创建座位变化事件。 */
     public static Message monitorEvent(long clientId, long registrationRequestId, byte[] body) {
         return new Message(

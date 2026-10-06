@@ -11,10 +11,12 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 /** 负责客户端的 UDP 收发。当前只提供 DETAILS 查询。 */
 final class FlightClient implements AutoCloseable {
-    private static final int RECEIVE_TIMEOUT_MILLIS = 3_000;
+    private static final int RECEIVE_TIMEOUT_MILLIS = 800;
+    private static final int MAX_SEND_ATTEMPTS = 4;
 
     private final InetAddress serverAddress;
     private final int serverPort;
@@ -26,7 +28,6 @@ final class FlightClient implements AutoCloseable {
         this.serverAddress = serverAddress;
         this.serverPort = serverPort;
         this.socket = new DatagramSocket();
-        this.socket.setSoTimeout(RECEIVE_TIMEOUT_MILLIS);
 
         this.clientId = ThreadLocalRandom.current().nextLong();
     }
@@ -37,13 +38,7 @@ final class FlightClient implements AutoCloseable {
         Message request = Message.request(
                 Protocol.Operation.DETAILS, clientId, requestId, body);
 
-        byte[] encoded = MessageCodec.encode(request);
-        DatagramPacket requestPacket = new DatagramPacket(
-                encoded, encoded.length, serverAddress, serverPort);
-        socket.send(requestPacket);
-        System.out.println("请求已发送，等待服务端回复……");
-
-        Message reply = receiveMatchingReply(request);
+        Message reply = sendWithRetry(request);
         MessageCodec.BodyReader reader = MessageCodec.bodyReader(reply.body());
         int status = reader.readU8();
 
@@ -51,6 +46,7 @@ final class FlightClient implements AutoCloseable {
             FlightDetails details = new FlightDetails(
                     reader.readI64(), reader.readFloat32(), reader.readI32());
             reader.requireFullyRead();
+            sendAcknowledgement(reply);
             return details;
         }
 
@@ -61,19 +57,54 @@ final class FlightClient implements AutoCloseable {
         }
         String description = reader.readString();
         reader.requireFullyRead();
-        throw new IOException("服务端返回错误（status=" + status + "）：" + description);
+        sendAcknowledgement(reply);
+        throw new IOException("Server returned an error (status=" + status + "): " + description);
     }
 
-    private Message receiveMatchingReply(Message request)
-            throws IOException, ProtocolException {
+    private Message sendWithRetry(Message request) throws IOException {
+        byte[] encoded = MessageCodec.encode(request);
+        DatagramPacket requestPacket = new DatagramPacket(
+                encoded, encoded.length, serverAddress, serverPort);
+
+        for (int attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
+            // 每次重发沿用完全相同的请求字节，包括 clientId 和 requestId。
+            socket.send(requestPacket);
+            System.out.printf(
+                    "Request sent (attempt %d/%d); waiting for reply...%n",
+                    attempt,
+                    MAX_SEND_ATTEMPTS);
+
+            Message reply = receiveMatchingReply(request);
+            if (reply != null) {
+                return reply;
+            }
+        }
+
+        throw new IOException("Timed out after " + MAX_SEND_ATTEMPTS + " attempts");
+    }
+
+    private Message receiveMatchingReply(Message request) throws IOException {
+        long deadline = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(RECEIVE_TIMEOUT_MILLIS);
+
         while (true) {
+            long remainingNanos = deadline - System.nanoTime();
+            if (remainingNanos <= 0) {
+                return null;
+            }
+
+            // 非匹配数据报不会重新开始 800 ms 计时。
+            int remainingMillis = (int) Math.max(
+                    1, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
+            socket.setSoTimeout(remainingMillis);
+
             byte[] buffer = new byte[Protocol.MAX_DATAGRAM_LENGTH];
             DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
 
             try {
                 socket.receive(packet);
             } catch (SocketTimeoutException exception) {
-                throw new IOException("等待服务端回复超时", exception);
+                return null;
             }
 
             // 只接受配置的服务端发来的数据报，避免其他 UDP 数据干扰当前请求。
@@ -85,7 +116,7 @@ final class FlightClient implements AutoCloseable {
             try {
                 reply = MessageCodec.decode(packet.getData(), packet.getOffset(), packet.getLength());
             } catch (ProtocolException exception) {
-                System.out.println("忽略非法回复：" + exception.getMessage());
+                System.out.println("Ignoring invalid reply: " + exception.getMessage());
                 continue;
             }
 
@@ -96,6 +127,20 @@ final class FlightClient implements AutoCloseable {
                     && reply.requestId() == request.requestId()) {
                 return reply;
             }
+        }
+    }
+
+    private void sendAcknowledgement(Message reply) {
+        byte[] encoded = MessageCodec.encode(Message.acknowledgementTo(reply));
+        DatagramPacket packet = new DatagramPacket(
+                encoded, encoded.length, serverAddress, serverPort);
+        try {
+            // 确认只帮助服务端提前清理缓存；发送失败时仍有 60 秒 TTL 兜底。
+            socket.send(packet);
+            System.out.println("Reply acknowledgement sent.");
+        } catch (IOException exception) {
+            System.out.println("Failed to send reply acknowledgement: "
+                    + exception.getMessage());
         }
     }
 

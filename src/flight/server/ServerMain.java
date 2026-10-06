@@ -9,32 +9,37 @@ public final class ServerMain {
     }
 
     public static void main(String[] args) {
-        if (args.length != 1) {
+        if (args.length != 2) {
             printUsage();
             return;
         }
 
         int port;
+        InvocationMode mode;
         try {
             port = Integer.parseInt(args[0]);
+            mode = InvocationMode.parse(args[1]);
             if (port < 1 || port > 65_535) {
                 throw new NumberFormatException();
             }
-        } catch (NumberFormatException exception) {
+        } catch (IllegalArgumentException exception) {
             printUsage();
             return;
         }
 
         try {
             FlightService service = FlightService.load(Paths.get("data", "flights.tsv"));
-            FlightServer server = new FlightServer(port, service);
+            FlightServer server = new FlightServer(port, service, mode);
             server.run();
         } catch (IOException exception) {
-            System.out.println("服务端启动、读取数据或接收失败：" + exception.getMessage());
+            System.out.println("Server startup, data loading, or receive failed: "
+                    + exception.getMessage());
         }
     }
 
     private static void printUsage() {
-        System.out.println("用法：java -cp out flight.server.ServerMain <port>");
+        System.out.println(
+                "Usage: java -cp out flight.server.ServerMain "
+                        + "<port> <at-least-once|at-most-once>");
     }
 }
