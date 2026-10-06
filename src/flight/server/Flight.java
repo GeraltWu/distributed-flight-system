@@ -47,4 +47,20 @@ final class Flight {
     int availableSeats() {
         return availableSeats;
     }
+
+    boolean reserveSeats(int seatCount) {
+        if (availableSeats < seatCount) {
+            return false;
+        }
+        availableSeats -= seatCount;
+        return true;
+    }
+
+    void setFare(float newFare) {
+        fare = newFare;
+    }
+
+    void addSeats(int seatCount) {
+        availableSeats += seatCount;
+    }
 }

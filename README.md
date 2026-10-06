@@ -2,6 +2,8 @@
 
 基于 UDP 的分布式航班信息系统，使用 Java 实现。网络消息按照 [协议文档](docs/protocol.md) 手动编码和解码，不使用 Java RMI、对象序列化或输入输出流类进行消息编解码。
 
+课堂展示的机器安排、操作顺序和预期结果见 [演示指南](docs/demo-guide.md)。
+
 ## 项目目录
 
 ```text
@@ -18,9 +20,11 @@ distributed-flight-system/
       ├─ server/
       │  ├─ ServerMain.java
       │  ├─ FlightServer.java
+      │  ├─ FlightRequestHandler.java
       │  ├─ Flight.java
       │  ├─ FlightService.java
       │  ├─ InvocationMode.java
+      │  ├─ LossSimulator.java
       │  ├─ MonitorRegistry.java      # 后续实现监控时添加
       │  └─ ReplyHistory.java
       └─ client/
@@ -33,7 +37,7 @@ distributed-flight-system/
 ## 目录职责
 
 - `flight.protocol`：客户端和服务端共享的协议常量、消息结构及字节编解码，不保存业务状态。
-- `flight.server`：维护航班数据，执行业务操作，接收请求、发送回复并处理监控登记和回复历史。
+- `flight.server`：`FlightServer` 负责 UDP 和调用语义，`FlightRequestHandler` 负责业务请求与回复，其他类维护航班数据、监控登记和回复历史。
 - `flight.client`：提供控制台界面，生成请求编号，发送请求、接收回复并显示结果。
 - `data/flights.tsv`：保存初始航班数据。服务端启动时载入内存，运行期间的修改不会写回文件。
 
@@ -41,7 +45,7 @@ distributed-flight-system/
 
 ## 当前功能
 
-目前已实现基本 UDP 客户端、服务端和 `DETAILS` 航班详情查询。客户端可以输入航班号，查询起飞时间、票价和剩余座位；不存在的航班会收到 `NOT_FOUND` 错误。客户端会以 800 毫秒为间隔最多发送 4 次请求，服务端启动时可选择 `at-least-once` 或 `at-most-once`。至多一次模式使用回复 history 去重，客户端确认与 60 秒 TTL 负责清理缓存。其他业务操作和监控将在后续阶段实现。
+目前已实现除 `MONITOR` 外的五个业务操作：分页航线查询 `ROUTE`、航班详情 `DETAILS`、座位预订 `RESERVE`、幂等的票价设置 `SET_FARE`，以及非幂等的座位增加 `ADD_SEATS`。客户端会以 800 毫秒为间隔最多发送 4 次请求，服务端启动时可选择 `at-least-once` 或 `at-most-once`。至多一次模式使用回复 history 去重，客户端确认与 60 秒 TTL 负责清理缓存。调用语义实验支持一次性丢弃 `ADD_SEATS` 请求或回复，监控将在后续阶段实现。
 
 ## 编译和运行
 
@@ -69,3 +73,15 @@ java -cp out flight.client.ClientMain 120.26.249.221 5000
 ```
 
 服务端的最后一个参数选择调用语义，客户端命令不变。跨电脑运行时，把 `127.0.0.1` 换成服务端电脑的 IP 地址 `120.26.249.221`。
+
+## 丢包模拟
+
+服务端可选的第三个参数用于调用语义实验，只对第一次 `ADD_SEATS` 请求或回复生效，命中一次后自动关闭；省略时不模拟丢包：
+
+```powershell
+java -cp out flight.server.ServerMain 5000 at-most-once drop-request-once
+java -cp out flight.server.ServerMain 5000 at-least-once drop-reply-once
+java -cp out flight.server.ServerMain 5000 at-most-once drop-reply-once
+```
+
+重启服务端会同时恢复 TSV 初始数据并重置丢包开关。

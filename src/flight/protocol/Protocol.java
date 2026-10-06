@@ -67,4 +67,23 @@ public final class Protocol {
                 || messageType == MessageType.EVENT
                 || messageType == MessageType.ACKNOWLEDGEMENT;
     }
+
+    public static String operationName(int operation) {
+        switch (operation) {
+            case Operation.ROUTE:
+                return "ROUTE";
+            case Operation.DETAILS:
+                return "DETAILS";
+            case Operation.RESERVE:
+                return "RESERVE";
+            case Operation.MONITOR:
+                return "MONITOR";
+            case Operation.SET_FARE:
+                return "SET_FARE";
+            case Operation.ADD_SEATS:
+                return "ADD_SEATS";
+            default:
+                return "UNKNOWN";
+        }
+    }
 }

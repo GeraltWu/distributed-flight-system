@@ -4,9 +4,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.Normalizer;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** 保存航班数据并提供业务查询。 */
@@ -77,8 +81,31 @@ final class FlightService {
         return flights.get(flightId);
     }
 
+    List<Integer> findByRoute(String source, String destination) {
+        String sourceKey = routeKey(source);
+        String destinationKey = routeKey(destination);
+        List<Integer> matches = new ArrayList<>();
+
+        for (Flight flight : flights.values()) {
+            if (routeKey(flight.source()).equals(sourceKey)
+                    && routeKey(flight.destination()).equals(destinationKey)) {
+                matches.add(flight.id());
+            }
+        }
+
+        // 固定排序使分页在本次服务端运行期间保持稳定。
+        Collections.sort(matches);
+        return matches;
+    }
+
+    private static String routeKey(String value) {
+        return Normalizer.normalize(value.strip(), Normalizer.Form.NFC)
+                .toLowerCase(Locale.ROOT);
+    }
+
     private static void validatePlace(String value, String name, int lineNumber) throws IOException {
-        int byteLength = value.getBytes(StandardCharsets.UTF_8).length;
+        String normalized = Normalizer.normalize(value.strip(), Normalizer.Form.NFC);
+        int byteLength = normalized.getBytes(StandardCharsets.UTF_8).length;
         if (byteLength < 1 || byteLength > 255) {
             throw invalidLine(lineNumber, name + " must occupy 1 to 255 UTF-8 bytes");
         }

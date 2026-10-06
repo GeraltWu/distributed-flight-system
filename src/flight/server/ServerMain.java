@@ -9,16 +9,20 @@ public final class ServerMain {
     }
 
     public static void main(String[] args) {
-        if (args.length != 2) {
+        if (args.length < 2 || args.length > 3) {
             printUsage();
             return;
         }
 
         int port;
         InvocationMode mode;
+        LossSimulator lossSimulator;
         try {
             port = Integer.parseInt(args[0]);
             mode = InvocationMode.parse(args[1]);
+            lossSimulator = args.length == 3
+                    ? LossSimulator.parse(args[2])
+                    : LossSimulator.none();
             if (port < 1 || port > 65_535) {
                 throw new NumberFormatException();
             }
@@ -29,17 +33,18 @@ public final class ServerMain {
 
         try {
             FlightService service = FlightService.load(Paths.get("data", "flights.tsv"));
-            FlightServer server = new FlightServer(port, service, mode);
+            FlightServer server = new FlightServer(port, service, mode, lossSimulator);
             server.run();
         } catch (IOException exception) {
-            System.out.println("Server startup, data loading, or receive failed: "
+            System.out.println("[ERROR] Server startup, data loading, or receive failed: "
                     + exception.getMessage());
         }
     }
 
     private static void printUsage() {
         System.out.println(
-                "Usage: java -cp out flight.server.ServerMain "
-                        + "<port> <at-least-once|at-most-once>");
+                "[USAGE] java -cp out flight.server.ServerMain "
+                        + "<port> <at-least-once|at-most-once> "
+                        + "[none|drop-request-once|drop-reply-once]");
     }
 }

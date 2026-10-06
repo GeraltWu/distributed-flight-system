@@ -10,26 +10,33 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.SocketTimeoutException;
 
-/** 接收 UDP 请求并调用航班服务。当前只处理 DETAILS。 */
+/** 接收 UDP 请求并调用航班服务。 */
 final class FlightServer {
     private static final int RECEIVE_TIMEOUT_MILLIS = 200;
 
     private final int port;
-    private final FlightService flightService;
+    private final FlightRequestHandler requestHandler;
     private final InvocationMode mode;
+    private final LossSimulator lossSimulator;
     private final ReplyHistory replyHistory = new ReplyHistory();
 
-    FlightServer(int port, FlightService flightService, InvocationMode mode) {
+    FlightServer(
+            int port,
+            FlightService flightService,
+            InvocationMode mode,
+            LossSimulator lossSimulator) {
         this.port = port;
-        this.flightService = flightService;
+        this.requestHandler = new FlightRequestHandler(flightService);
         this.mode = mode;
+        this.lossSimulator = lossSimulator;
     }
 
     void run() throws IOException {
         try (DatagramSocket socket = new DatagramSocket(port)) {
             socket.setSoTimeout(RECEIVE_TIMEOUT_MILLIS);
-            System.out.println("Server started on UDP port: " + port);
-            System.out.println("Invocation mode: " + mode);
+            System.out.println("[CONFIG] UDP port: " + port);
+            System.out.println("[CONFIG] Invocation mode: " + mode);
+            System.out.println("[CONFIG] Loss simulation: " + lossSimulator);
 
             while (true) {
                 byte[] buffer = new byte[Protocol.MAX_DATAGRAM_LENGTH];
@@ -55,7 +62,7 @@ final class FlightServer {
             message = MessageCodec.decode(packet.getData(), packet.getOffset(), packet.getLength());
         } catch (ProtocolException exception) {
             // 头部不可信时无法安全复制 clientId/requestId，因此只记录并丢弃。
-            System.out.println("Dropping invalid datagram: " + exception.getMessage());
+            System.out.println("[DROP] Invalid datagram: " + exception.getMessage());
             return;
         }
 
@@ -64,24 +71,35 @@ final class FlightServer {
             return;
         }
         if (message.messageType() != Protocol.MessageType.REQUEST) {
-            System.out.println("Dropping non-request message, messageType="
+            System.out.println("[DROP] Non-request message, messageType="
                     + message.messageType());
             return;
         }
 
         System.out.printf(
-                "Received request: clientId=%s, requestId=%s, operation=%d%n",
+                "[REQUEST] Received clientId=%s, requestId=%s, operation=%s(%d)%n",
                 Long.toUnsignedString(message.clientId()),
                 Long.toUnsignedString(message.requestId()),
+                Protocol.operationName(message.operation()),
                 message.operation());
+
+        // 请求丢失发生在业务处理和 history 记录之前。
+        if (lossSimulator.shouldDropRequest(message)) {
+            System.out.printf(
+                    "[LOSS] Simulated request loss: requestId=%s, operation=%s(%d)%n",
+                    Long.toUnsignedString(message.requestId()),
+                    Protocol.operationName(message.operation()),
+                    message.operation());
+            return;
+        }
 
         try {
             // 格式错误的请求不进入 history，也不占用最高请求编号。
-            validateRequestBody(message);
+            requestHandler.validateRequestBody(message);
             if (mode == InvocationMode.AT_MOST_ONCE) {
                 processAtMostOnce(socket, packet, message);
             } else {
-                sendReply(socket, packet, executeRequest(message));
+                sendReply(socket, packet, requestHandler.executeRequest(message));
             }
         } catch (ProtocolException exception) {
             sendError(
@@ -102,12 +120,12 @@ final class FlightServer {
         switch (decision) {
             case NEW_REQUEST:
                 // 先保存回复再发送；即使回复丢失，重传也不会再次执行业务操作。
-                Message reply = executeRequest(request);
+                Message reply = requestHandler.executeRequest(request);
                 replyHistory.remember(request, reply, System.nanoTime());
                 sendReply(socket, packet, reply);
                 break;
             case REPLAY_CACHED:
-                System.out.println("Replaying cached reply for requestId="
+                System.out.println("[HISTORY] Replaying cached reply for requestId="
                         + Long.toUnsignedString(request.requestId()));
                 sendReply(socket, packet, replyHistory.cachedReply(request.clientId()));
                 break;
@@ -138,85 +156,12 @@ final class FlightServer {
         }
 
         if (replyHistory.acknowledge(acknowledgement)) {
-            System.out.println("Reply acknowledged for requestId="
+            System.out.println("[ACK] Reply acknowledged for requestId="
                     + Long.toUnsignedString(acknowledgement.requestId()));
         } else {
-            System.out.println("Ignoring unmatched acknowledgement for requestId="
+            System.out.println("[ACK] Ignoring unmatched acknowledgement for requestId="
                     + Long.toUnsignedString(acknowledgement.requestId()));
         }
-    }
-
-    private void validateRequestBody(Message request) throws ProtocolException {
-        MessageCodec.BodyReader reader = MessageCodec.bodyReader(request.body());
-        switch (request.operation()) {
-            case Protocol.Operation.ROUTE:
-                reader.readString();
-                reader.readString();
-                reader.readU32();
-                break;
-            case Protocol.Operation.DETAILS:
-                reader.readI32();
-                break;
-            case Protocol.Operation.RESERVE:
-            case Protocol.Operation.ADD_SEATS:
-                reader.readI32();
-                reader.readI32();
-                break;
-            case Protocol.Operation.MONITOR:
-                reader.readI32();
-                reader.readU32();
-                break;
-            case Protocol.Operation.SET_FARE:
-                reader.readI32();
-                reader.readFloat32();
-                break;
-            default:
-                // 未知操作没有可验证的消息体格式，由业务层返回 UNSUPPORTED。
-                return;
-        }
-        reader.requireFullyRead();
-    }
-
-    private Message executeRequest(Message request) throws ProtocolException {
-        if (request.operation() == Protocol.Operation.DETAILS) {
-            return handleDetails(request);
-        }
-        return errorReply(request, Protocol.Status.UNSUPPORTED, "Operation is not implemented");
-    }
-
-    private Message handleDetails(Message request) throws ProtocolException {
-        MessageCodec.BodyReader reader = MessageCodec.bodyReader(request.body());
-        int flightId = reader.readI32();
-        reader.requireFullyRead();
-
-        if (flightId <= 0) {
-            return errorReply(
-                    request,
-                    Protocol.Status.BAD_ARGUMENT,
-                    "Flight ID must be a positive integer");
-        }
-
-        Flight flight = flightService.findById(flightId);
-        if (flight == null) {
-            return errorReply(request, Protocol.Status.NOT_FOUND, "Flight not found");
-        }
-
-        byte[] body = MessageCodec.bodyWriter()
-                .writeU8(Protocol.Status.OK)
-                .writeI64(flight.departureUtcSeconds())
-                .writeFloat32(flight.fare())
-                .writeI32(flight.availableSeats())
-                .toByteArray();
-        return Message.replyTo(request, body);
-    }
-
-    private Message errorReply(Message request, int status, String description)
-            throws ProtocolException {
-        byte[] body = MessageCodec.bodyWriter()
-                .writeU8(status)
-                .writeString(description)
-                .toByteArray();
-        return Message.replyTo(request, body);
     }
 
     private void sendError(
@@ -226,15 +171,29 @@ final class FlightServer {
             int status,
             String description) {
         try {
-            sendReply(socket, requestPacket, errorReply(request, status, description));
+            sendReply(
+                    socket,
+                    requestPacket,
+                    requestHandler.errorReply(request, status, description));
         } catch (ProtocolException exception) {
             // 内置错误说明都很短；若这里失败，只记录服务端自身的编码问题。
-            System.out.println("Failed to encode error reply: " + exception.getMessage());
+            System.out.println("[ERROR] Failed to encode error reply: "
+                    + exception.getMessage());
         }
     }
 
     private void sendReply(
             DatagramSocket socket, DatagramPacket requestPacket, Message reply) {
+        // 回复已经生成，丢弃时不调用 socket.send；至多一次缓存仍然保留。
+        if (lossSimulator.shouldDropReply(reply)) {
+            System.out.printf(
+                    "[LOSS] Simulated reply loss: requestId=%s, operation=%s(%d)%n",
+                    Long.toUnsignedString(reply.requestId()),
+                    Protocol.operationName(reply.operation()),
+                    reply.operation());
+            return;
+        }
+
         byte[] encoded = MessageCodec.encode(reply);
         DatagramPacket replyPacket = new DatagramPacket(
                 encoded,
@@ -246,12 +205,13 @@ final class FlightServer {
             // 回复必须发回请求数据报的真实来源地址和端口。
             socket.send(replyPacket);
             System.out.printf(
-                    "Sent reply: requestId=%s, operation=%d, bytes=%d%n",
+                    "[REPLY] Sent requestId=%s, operation=%s(%d), bytes=%d%n",
                     Long.toUnsignedString(reply.requestId()),
+                    Protocol.operationName(reply.operation()),
                     reply.operation(),
                     encoded.length);
         } catch (IOException exception) {
-            System.out.println("Failed to send reply: " + exception.getMessage());
+            System.out.println("[ERROR] Failed to send reply: " + exception.getMessage());
         }
     }
 }
