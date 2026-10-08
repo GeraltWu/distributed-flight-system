@@ -238,7 +238,12 @@ final class FlightClient implements AutoCloseable {
         }
         String description = reader.readString();
         reader.requireFullyRead();
-        sendAcknowledgement(reply);
+        if (status == Protocol.Status.STALE_REQUEST) {
+            throw new IOException(
+                    "Server has already seen this request, but its cached result is no longer "
+                            + "available; execution result is unknown: "
+                            + description);
+        }
         throw new IOException("Server returned an error (status=" + status + "): " + description);
     }
 

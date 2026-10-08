@@ -37,7 +37,7 @@ final class ReplyHistory {
         }
 
         // 最高编号永久保留；缓存被确认或过期后，同编号请求只能判为旧请求。
-        if (state.reply == null || nowNanos >= state.expiresAtNanos) {
+        if (state.reply == null || state.expiresAtNanos - nowNanos <= 0) {
             state.clearReply();
             return Decision.STALE;
         }
@@ -109,13 +109,20 @@ final class ReplyHistory {
             return false;
         }
 
+        byte[] cachedBody = state.reply.body();
+        if (cachedBody.length == 0
+                || (cachedBody[0] & 0xff) != Protocol.Status.OK) {
+            // 协议只确认成功回复；错误缓存依靠 TTL 或更高编号请求清理。
+            return false;
+        }
+
         state.clearReply();
         return true;
     }
 
     void removeExpiredReplies(long nowNanos) {
         for (ClientState state : clients.values()) {
-            if (state.reply != null && nowNanos >= state.expiresAtNanos) {
+            if (state.reply != null && state.expiresAtNanos - nowNanos <= 0) {
                 state.clearReply();
             }
         }

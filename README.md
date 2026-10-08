@@ -45,7 +45,7 @@ distributed-flight-system/
 
 ## 当前功能
 
-目前已实现六个业务操作：分页航线查询 `ROUTE`、航班详情 `DETAILS`、座位预订 `RESERVE`、限时座位监控 `MONITOR`、幂等的票价设置 `SET_FARE`，以及非幂等的座位增加 `ADD_SEATS`。协议使用 UTC epoch 时间，客户端界面统一转换为新加坡时间并标注 `SGT`。客户端每次等待回复 1 秒，最多发送 4 次请求；服务端启动时可选择 `at-least-once` 或 `at-most-once`。至多一次模式使用 reply history 去重，客户端确认与 60 秒 TTL 负责清理缓存。`RESERVE` 和 `ADD_SEATS` 成功后，服务端会向该航班的有效监控客户端发送 UDP callback。
+目前已实现六个业务操作：分页航线查询 `ROUTE`、航班详情 `DETAILS`、座位预订 `RESERVE`、限时座位监控 `MONITOR`、幂等的票价设置 `SET_FARE`，以及非幂等的座位增加 `ADD_SEATS`。协议使用 UTC epoch 时间，客户端界面统一转换为新加坡时间并标注 `SGT`。客户端每次等待回复 1 秒，最多发送 4 次请求；服务端启动时可选择 `at-least-once` 或 `at-most-once`。至多一次模式使用 reply history 去重；客户端确认成功回复，错误回复和丢失的确认由 60 秒 TTL 负责清理。`RESERVE` 和 `ADD_SEATS` 成功后，服务端会向该航班的有效监控客户端发送 UDP callback。
 
 ## 编译和运行
 

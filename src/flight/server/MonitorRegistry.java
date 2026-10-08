@@ -51,7 +51,7 @@ final class MonitorRegistry {
         while (iterator.hasNext()) {
             Map.Entry<RegistrationKey, Registration> entry = iterator.next();
             Registration registration = entry.getValue();
-            if (nowNanos >= registration.expiresAtNanos) {
+            if (registration.expiresAtNanos - nowNanos <= 0) {
                 iterator.remove();
                 continue;
             }
@@ -80,7 +80,8 @@ final class MonitorRegistry {
     }
 
     void removeExpired(long nowNanos) {
-        registrations.values().removeIf(registration -> nowNanos >= registration.expiresAtNanos);
+        registrations.values().removeIf(
+                registration -> registration.expiresAtNanos - nowNanos <= 0);
     }
 
     static long remainingMillis(long expiresAtNanos, long nowNanos) {
