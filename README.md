@@ -77,13 +77,14 @@ java -cp out flight.client.ClientMain 120.26.249.221 5000
 ## C客户端编译运行
 打开 https://www.msys2.org ，下载安装程序并安装，路径用默认的 C:\msys64。
 安装完成后，从开始菜单打开 MSYS2 UCRT64，运行：
+```
    pacman -Syu
-
+```
 如果提示窗口会关闭，关掉后重新打开 UCRT64，再运行一次这条命令。
 安装编译器：
-
+```
    pacman -S mingw-w64-ucrt-x86_64-gcc
-
+```
 把 C:\msys64\ucrt64\bin 加到系统环境变量 Path 里（设置 → 系统 → 关于 → 高级系统设置 → 环境变量）。这样在普通的 PowerShell 或 cmd 里也能用 gcc。
 新开一个终端，检查：
 ```powershell
