@@ -7,14 +7,17 @@ import flight.protocol.ProtocolException;
 
 import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
+import java.net.InetSocketAddress;
 import java.util.List;
 
 /** 解码业务参数、执行航班操作并构造协议回复。 */
 final class FlightRequestHandler {
     private final FlightService flightService;
+    private final MonitorRegistry monitorRegistry;
 
-    FlightRequestHandler(FlightService flightService) {
+    FlightRequestHandler(FlightService flightService, MonitorRegistry monitorRegistry) {
         this.flightService = flightService;
+        this.monitorRegistry = monitorRegistry;
     }
 
     /** 只检查消息体结构；业务取值错误由具体操作返回 BAD_ARGUMENT。 */
@@ -49,7 +52,10 @@ final class FlightRequestHandler {
         reader.requireFullyRead();
     }
 
-    Message executeRequest(Message request) throws ProtocolException {
+    Message executeRequest(
+            Message request,
+            InetSocketAddress clientEndpoint,
+            long nowNanos) throws ProtocolException {
         switch (request.operation()) {
             case Protocol.Operation.ROUTE:
                 return handleRoute(request);
@@ -57,6 +63,8 @@ final class FlightRequestHandler {
                 return handleDetails(request);
             case Protocol.Operation.RESERVE:
                 return handleReserve(request);
+            case Protocol.Operation.MONITOR:
+                return handleMonitor(request, clientEndpoint, nowNanos);
             case Protocol.Operation.SET_FARE:
                 return handleSetFare(request);
             case Protocol.Operation.ADD_SEATS:
@@ -187,6 +195,43 @@ final class FlightRequestHandler {
         byte[] body = MessageCodec.bodyWriter()
                 .writeU8(Protocol.Status.OK)
                 .writeFloat32(flight.fare())
+                .toByteArray();
+        return Message.replyTo(request, body);
+    }
+
+    private Message handleMonitor(
+            Message request,
+            InetSocketAddress clientEndpoint,
+            long nowNanos) throws ProtocolException {
+        MessageCodec.BodyReader reader = MessageCodec.bodyReader(request.body());
+        int flightId = reader.readI32();
+        long intervalSeconds = reader.readU32();
+        reader.requireFullyRead();
+
+        if (flightId <= 0 || intervalSeconds < 1 || intervalSeconds > 600) {
+            return errorReply(
+                    request,
+                    Protocol.Status.BAD_ARGUMENT,
+                    "Flight ID must be positive and monitor interval must be 1 to 600 seconds");
+        }
+
+        Flight flight = flightService.findById(flightId);
+        if (flight == null) {
+            return errorReply(request, Protocol.Status.NOT_FOUND, "Flight not found");
+        }
+
+        long expiresAtNanos = monitorRegistry.register(
+                flightId,
+                intervalSeconds,
+                request.clientId(),
+                request.requestId(),
+                clientEndpoint,
+                nowNanos);
+        long remainingMillis = MonitorRegistry.remainingMillis(expiresAtNanos, System.nanoTime());
+        byte[] body = MessageCodec.bodyWriter()
+                .writeU8(Protocol.Status.OK)
+                .writeI32(flight.availableSeats())
+                .writeU32(remainingMillis)
                 .toByteArray();
         return Message.replyTo(request, body);
     }

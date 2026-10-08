@@ -1,6 +1,9 @@
 package flight.server;
 
 import flight.protocol.Message;
+import flight.protocol.MessageCodec;
+import flight.protocol.Protocol;
+import flight.protocol.ProtocolException;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -45,7 +48,11 @@ final class ReplyHistory {
         return Decision.REPLAY_CACHED;
     }
 
-    void remember(Message request, Message reply, long nowNanos) {
+    void remember(
+            Message request,
+            Message reply,
+            long nowNanos,
+            long monitorExpiresAtNanos) {
         ClientState state = clients.get(request.clientId());
         if (state == null) {
             state = new ClientState();
@@ -57,10 +64,40 @@ final class ReplyHistory {
         state.requestBody = request.body();
         state.reply = reply;
         state.expiresAtNanos = nowNanos + REPLY_TTL_NANOS;
+        state.monitorExpiresAtNanos = monitorExpiresAtNanos;
     }
 
-    Message cachedReply(long clientId) {
-        return clients.get(clientId).reply;
+    Message cachedReply(long clientId, long nowNanos) throws ProtocolException {
+        ClientState state = clients.get(clientId);
+        Message reply = state.reply;
+        if (state.operation != Protocol.Operation.MONITOR
+                || state.monitorExpiresAtNanos == 0) {
+            return reply;
+        }
+
+        MessageCodec.BodyReader reader = MessageCodec.bodyReader(reply.body());
+        int status = reader.readU8();
+        if (status != Protocol.Status.OK) {
+            return reply;
+        }
+        int availableSeats = reader.readI32();
+        reader.readU32();
+        reader.requireFullyRead();
+
+        long remainingMillis = MonitorRegistry.remainingMillis(
+                state.monitorExpiresAtNanos,
+                nowNanos);
+        byte[] body = MessageCodec.bodyWriter()
+                .writeU8(Protocol.Status.OK)
+                .writeI32(availableSeats)
+                .writeU32(remainingMillis)
+                .toByteArray();
+        Message originalRequest = Message.request(
+                state.operation,
+                clientId,
+                state.highestRequestId,
+                state.requestBody);
+        return Message.replyTo(originalRequest, body);
     }
 
     boolean acknowledge(Message acknowledgement) {
@@ -90,11 +127,13 @@ final class ReplyHistory {
         private byte[] requestBody;
         private Message reply;
         private long expiresAtNanos;
+        private long monitorExpiresAtNanos;
 
         private void clearReply() {
             requestBody = null;
             reply = null;
             expiresAtNanos = 0;
+            monitorExpiresAtNanos = 0;
         }
     }
 }

@@ -25,7 +25,7 @@ distributed-flight-system/
       │  ├─ FlightService.java
       │  ├─ InvocationMode.java
       │  ├─ LossSimulator.java
-      │  ├─ MonitorRegistry.java      # 后续实现监控时添加
+      │  ├─ MonitorRegistry.java
       │  └─ ReplyHistory.java
       └─ client/
          ├─ ClientMain.java
@@ -45,7 +45,7 @@ distributed-flight-system/
 
 ## 当前功能
 
-目前已实现除 `MONITOR` 外的五个业务操作：分页航线查询 `ROUTE`、航班详情 `DETAILS`、座位预订 `RESERVE`、幂等的票价设置 `SET_FARE`，以及非幂等的座位增加 `ADD_SEATS`。客户端会以 800 毫秒为间隔最多发送 4 次请求，服务端启动时可选择 `at-least-once` 或 `at-most-once`。至多一次模式使用回复 history 去重，客户端确认与 60 秒 TTL 负责清理缓存。调用语义实验支持一次性丢弃 `ADD_SEATS` 请求或回复，监控将在后续阶段实现。
+目前已实现六个业务操作：分页航线查询 `ROUTE`、航班详情 `DETAILS`、座位预订 `RESERVE`、限时座位监控 `MONITOR`、幂等的票价设置 `SET_FARE`，以及非幂等的座位增加 `ADD_SEATS`。协议使用 UTC epoch 时间，客户端界面统一转换为新加坡时间并标注 `SGT`。客户端每次等待回复 1 秒，最多发送 4 次请求；服务端启动时可选择 `at-least-once` 或 `at-most-once`。至多一次模式使用 reply history 去重，客户端确认与 60 秒 TTL 负责清理缓存。`RESERVE` 和 `ADD_SEATS` 成功后，服务端会向该航班的有效监控客户端发送 UDP callback。
 
 ## 编译和运行
 
@@ -76,7 +76,7 @@ java -cp out flight.client.ClientMain 120.26.249.221 5000
 
 ## 丢包模拟
 
-服务端可选的第三个参数用于调用语义实验，只对第一次 `ADD_SEATS` 请求或回复生效，命中一次后自动关闭；省略时不模拟丢包：
+服务端可选的第三个参数用于调用语义实验。对每个新的 `ADD_SEATS` 调用，它会丢弃该 `(clientId, requestId)` 的第一次请求或第一次回复；同一请求的后续重传正常处理。省略时不模拟丢包：
 
 ```powershell
 java -cp out flight.server.ServerMain 5000 at-most-once drop-request-once
@@ -84,4 +84,4 @@ java -cp out flight.server.ServerMain 5000 at-least-once drop-reply-once
 java -cp out flight.server.ServerMain 5000 at-most-once drop-reply-once
 ```
 
-重启服务端会同时恢复 TSV 初始数据并重置丢包开关。
+重启服务端会恢复 TSV 初始数据，并清空已经触发过丢包的请求编号记录。

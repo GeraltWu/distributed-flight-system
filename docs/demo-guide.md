@@ -6,9 +6,9 @@
 | --- | --- | --- |
 | 客户端和服务端通过 UDP 通信 | 不同电脑运行服务端和客户端，完成查询与修改 | 已实现 |
 | 按航线查询航班号 | 查询 `Singapore -> Hong Kong`，返回 `[101, 102]` | 已实现 |
-| 查询航班详情 | 查询航班 `101`，显示 UTC 时间、票价和剩余座位 | 已实现 |
+| 查询航班详情 | 查询航班 `101`，显示新加坡时间、票价和剩余座位 | 已实现 |
 | 预订座位 | 预订成功后座位减少；余票不足时返回错误 | 已实现 |
-| 在指定期限内监控座位变化 | 一个客户端监控，另一个客户端预订，监控端收到 callback | 待实现 `MONITOR` |
+| 在指定期限内监控座位变化 | 一个客户端监控，另一个客户端预订，监控端收到 callback | 已实现 |
 | 一个幂等附加操作 | 对同一航班重复执行 `SET_FARE(375.0)`，票价始终为 `375.0` | 已实现 |
 | 一个非幂等附加操作 | 连续执行两次 `ADD_SEATS(1)`，座位累计增加两次 | 已实现 |
 | `at-least-once` 和 `at-most-once` | 丢失第一次回复后比较 `ADD_SEATS` 的最终结果 | 已实现 |
@@ -93,12 +93,12 @@ Destination: Hong Kong
 
 ```text
 [RESULT] Flight details:
-  Departure time: 2026-10-20 01:00:00 UTC
+  Departure time: 2026-10-20 09:00:00 SGT
   Fare: 350.00
   Available seats: 10
 ```
 
-同时指出起飞时间明确使用 UTC 显示。
+UTC 是协议传输和数据文件使用的时间基准；客户端显示时转换为新加坡时间，并明确标注 `SGT`。
 
 ### 4.3 座位预订
 
@@ -114,7 +114,7 @@ Destination: Hong Kong
 
 ### 4.4 幂等操作
 
-选择 `4. Set fare`，连续两次把航班 `101` 的票价设置为 `375.0`。
+选择 `5. Set fare`，连续两次把航班 `101` 的票价设置为 `375.0`。
 
 两次结果都应为：
 
@@ -126,20 +126,22 @@ Destination: Hong Kong
 
 ### 4.5 非幂等操作
 
-选择 `5. Add seats`，连续两次为航班 `101` 增加 1 个座位。
+选择 `6. Add seats`，连续两次为航班 `101` 增加 1 个座位。
 
 如果开始时有 8 个座位，两次结果应依次为 9 和 10。说明：重复执行会继续改变状态，因此 `ADD_SEATS` 是非幂等操作。
 
 ## 5. Callback 演示
 
-> 当前代码尚未实现 `MONITOR`。本节是完成该功能后的正式演示流程。
-
 1. 重启服务端，恢复航班 `101` 的座位数为 10。
-2. 在电脑 B 启动客户端，为航班 `101` 登记 30 秒监控。
+2. 在电脑 B 启动客户端，选择 `4. Monitor seat availability`，为航班 `101` 登记 30 秒监控。
 3. 电脑 B 进入等待状态，在期限结束前不输入其他请求。
 4. 在电脑 A 启动另一个客户端，为航班 `101` 预订 1 个座位。
 5. 电脑 A 显示预订成功，剩余座位为 9。
-6. 电脑 B 收到服务端主动发送的 callback，显示航班号、最新座位数 9、事件序号和事件时间。
+6. 电脑 B 收到服务端主动发送的 callback，显示航班号、最新座位数 9、事件序号和以 `SGT` 标注的事件时间，例如：
+
+   ```text
+   [EVENT] Flight 101 seats=9, sequence=1, time=2026-10-08 14:00:23 SGT
+   ```
 7. 等待 30 秒期限结束，确认监控客户端退出等待状态。
 8. 再进行一次预订，确认已经过期的监控登记不再收到 callback。
 
@@ -147,13 +149,13 @@ Destination: Hong Kong
 
 ## 6. 两种 invocation semantics 对比
 
-服务端的可选第三个参数会确定性地丢弃第一次 `ADD_SEATS` 请求或回复，命中一次后自动关闭。客户端命令不变。每次重启服务端都会重置丢包开关。
+服务端的可选第三个参数会针对每个新的 `ADD_SEATS` 调用，确定性地丢弃该 `(clientId, requestId)` 的第一次请求或第一次回复。同一调用的重传不会再次被丢弃；下一次 `ADD_SEATS` 使用新的 `requestId`，因此又会丢弃它自己的第一次请求或回复。客户端命令不变。
 
 选择 `ADD_SEATS(101, 1)` 作为实验操作，因为它是非幂等操作。每组实验开始前都重启服务端，使初始座位数恢复为 10。
 
 ### 6.1 Request-loss 实验
 
-让程序只丢弃客户端第一次发送的 `ADD_SEATS` 请求：
+让程序丢弃本次 `ADD_SEATS` 调用的第一次请求：
 
 ```powershell
 java -cp out flight.server.ServerMain 5000 at-least-once drop-request-once
@@ -161,7 +163,7 @@ java -cp out flight.server.ServerMain 5000 at-most-once drop-request-once
 ```
 
 1. 第一次请求没有进入业务处理。
-2. 客户端等待约 800 ms 后，以相同 `clientId/requestId` 重传。
+2. 客户端等待约 1 秒后，以相同 `clientId/requestId` 重传。
 3. 重传请求被执行一次。
 4. 最终座位数为 11。
 
@@ -169,7 +171,7 @@ java -cp out flight.server.ServerMain 5000 at-most-once drop-request-once
 
 ### 6.2 Reply-loss 与 `at-least-once`
 
-启动 `at-least-once` 服务端，并让程序只丢弃第一次 `ADD_SEATS` 回复：
+启动 `at-least-once` 服务端，并让程序丢弃本次 `ADD_SEATS` 调用的第一次回复：
 
 ```powershell
 java -cp out flight.server.ServerMain 5000 at-least-once drop-reply-once
@@ -185,7 +187,7 @@ java -cp out flight.server.ServerMain 5000 at-least-once drop-reply-once
 
 ### 6.3 Reply-loss 与 `at-most-once`
 
-重启服务端，改用 `at-most-once`，再次只丢弃第一次 `ADD_SEATS` 回复：
+重启服务端，改用 `at-most-once`，再次丢弃本次 `ADD_SEATS` 调用的第一次回复：
 
 ```powershell
 java -cp out flight.server.ServerMain 5000 at-most-once drop-reply-once
@@ -246,7 +248,7 @@ java -cp out flight.server.ServerMain 5000 at-most-once drop-reply-once
 - [ ] `data/flights.tsv` 中的初始数据与本文档一致。
 - [ ] 六个业务操作均已实现。
 - [ ] `MONITOR` 到期后不再发送事件。
-- [ ] request-loss 和 reply-loss 都能稳定地只丢一次。
+- [ ] request-loss 和 reply-loss 对每个 `ADD_SEATS` 调用都只丢第一次对应报文。
 - [ ] 两种实验之间会重启服务端以恢复数据。
 - [ ] 服务端日志能显示模式、请求编号、操作、丢包、缓存重放和 ACK。
 - [ ] 报告中的实验表格与现场结果一致。

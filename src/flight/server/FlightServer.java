@@ -8,6 +8,7 @@ import flight.protocol.ProtocolException;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
 
 /** 接收 UDP 请求并调用航班服务。 */
@@ -19,6 +20,7 @@ final class FlightServer {
     private final InvocationMode mode;
     private final LossSimulator lossSimulator;
     private final ReplyHistory replyHistory = new ReplyHistory();
+    private final MonitorRegistry monitorRegistry = new MonitorRegistry();
 
     FlightServer(
             int port,
@@ -26,7 +28,7 @@ final class FlightServer {
             InvocationMode mode,
             LossSimulator lossSimulator) {
         this.port = port;
-        this.requestHandler = new FlightRequestHandler(flightService);
+        this.requestHandler = new FlightRequestHandler(flightService, monitorRegistry);
         this.mode = mode;
         this.lossSimulator = lossSimulator;
     }
@@ -51,6 +53,7 @@ final class FlightServer {
                 if (mode == InvocationMode.AT_MOST_ONCE) {
                     replyHistory.removeExpiredReplies(System.nanoTime());
                 }
+                monitorRegistry.removeExpired(System.nanoTime());
             }
         }
     }
@@ -99,7 +102,7 @@ final class FlightServer {
             if (mode == InvocationMode.AT_MOST_ONCE) {
                 processAtMostOnce(socket, packet, message);
             } else {
-                sendReply(socket, packet, requestHandler.executeRequest(message));
+                sendReply(socket, packet, executeAndNotify(socket, packet, message));
             }
         } catch (ProtocolException exception) {
             sendError(
@@ -120,14 +123,24 @@ final class FlightServer {
         switch (decision) {
             case NEW_REQUEST:
                 // 先保存回复再发送；即使回复丢失，重传也不会再次执行业务操作。
-                Message reply = requestHandler.executeRequest(request);
-                replyHistory.remember(request, reply, System.nanoTime());
+                Message reply = executeAndNotify(socket, packet, request);
+                long monitorExpiresAtNanos = request.operation() == Protocol.Operation.MONITOR
+                        ? monitorRegistry.expiryFor(request.clientId(), request.requestId())
+                        : 0;
+                replyHistory.remember(
+                        request,
+                        reply,
+                        System.nanoTime(),
+                        monitorExpiresAtNanos);
                 sendReply(socket, packet, reply);
                 break;
             case REPLAY_CACHED:
                 System.out.println("[HISTORY] Replaying cached reply for requestId="
                         + Long.toUnsignedString(request.requestId()));
-                sendReply(socket, packet, replyHistory.cachedReply(request.clientId()));
+                sendReply(
+                        socket,
+                        packet,
+                        replyHistory.cachedReply(request.clientId(), System.nanoTime()));
                 break;
             case CONFLICT:
                 sendError(
@@ -147,6 +160,68 @@ final class FlightServer {
                 break;
             default:
                 throw new IllegalStateException("Unknown history decision: " + decision);
+        }
+    }
+
+    private Message executeAndNotify(
+            DatagramSocket socket,
+            DatagramPacket packet,
+            Message request) throws ProtocolException {
+        InetSocketAddress endpoint = new InetSocketAddress(
+                packet.getAddress(),
+                packet.getPort());
+        Message reply = requestHandler.executeRequest(request, endpoint, System.nanoTime());
+
+        if ((request.operation() == Protocol.Operation.RESERVE
+                        || request.operation() == Protocol.Operation.ADD_SEATS)
+                && isSuccessful(reply)) {
+            MessageCodec.BodyReader requestReader = MessageCodec.bodyReader(request.body());
+            int flightId = requestReader.readI32();
+            requestReader.readI32();
+            requestReader.requireFullyRead();
+
+            MessageCodec.BodyReader replyReader = MessageCodec.bodyReader(reply.body());
+            replyReader.readU8();
+            int availableSeats = replyReader.readI32();
+            replyReader.requireFullyRead();
+            sendMonitorEvents(socket, flightId, availableSeats);
+        }
+        return reply;
+    }
+
+    private static boolean isSuccessful(Message reply) throws ProtocolException {
+        MessageCodec.BodyReader reader = MessageCodec.bodyReader(reply.body());
+        return reader.readU8() == Protocol.Status.OK;
+    }
+
+    private void sendMonitorEvents(
+            DatagramSocket socket,
+            int flightId,
+            int availableSeats) throws ProtocolException {
+        long nowNanos = System.nanoTime();
+        for (MonitorRegistry.OutboundEvent outbound : monitorRegistry.createSeatEvents(
+                flightId,
+                availableSeats,
+                nowNanos,
+                System.currentTimeMillis())) {
+            byte[] encoded = MessageCodec.encode(outbound.message());
+            DatagramPacket eventPacket = new DatagramPacket(
+                    encoded,
+                    encoded.length,
+                    outbound.endpoint().getAddress(),
+                    outbound.endpoint().getPort());
+            try {
+                socket.send(eventPacket);
+                System.out.printf(
+                        "[EVENT] Sent requestId=%s, flightId=%d, seats=%d, bytes=%d%n",
+                        Long.toUnsignedString(outbound.message().requestId()),
+                        flightId,
+                        availableSeats,
+                        encoded.length);
+            } catch (IOException exception) {
+                System.out.println("[ERROR] Failed to send monitor event: "
+                        + exception.getMessage());
+            }
         }
     }
 

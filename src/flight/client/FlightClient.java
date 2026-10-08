@@ -12,12 +12,14 @@ import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /** 负责客户端的 UDP 请求、重传和回复解码。 */
 final class FlightClient implements AutoCloseable {
-    private static final int RECEIVE_TIMEOUT_MILLIS = 800;
+    private static final int RECEIVE_TIMEOUT_MILLIS = 1_000;
     private static final int MAX_SEND_ATTEMPTS = 4;
 
     private final InetAddress serverAddress;
@@ -94,6 +96,93 @@ final class FlightClient implements AutoCloseable {
                 .writeI32(seatCount)
                 .toByteArray();
         return readSeatResult(invoke(Protocol.Operation.RESERVE, body));
+    }
+
+    void monitorFlight(
+            int flightId,
+            long intervalSeconds,
+            Consumer<MonitorRegistration> onRegistered,
+            Consumer<MonitorEvent> onEvent) throws IOException, ProtocolException {
+        Objects.requireNonNull(onRegistered, "onRegistered");
+        Objects.requireNonNull(onEvent, "onEvent");
+
+        byte[] body = MessageCodec.bodyWriter()
+                .writeI32(flightId)
+                .writeU32(intervalSeconds)
+                .toByteArray();
+        Message request = Message.request(
+                Protocol.Operation.MONITOR,
+                clientId,
+                nextRequestId++,
+                body);
+        byte[] encoded = MessageCodec.encode(request);
+        DatagramPacket requestPacket = new DatagramPacket(
+                encoded, encoded.length, serverAddress, serverPort);
+
+        Message reply = null;
+        long highestEventSequence = 0;
+        for (int attempt = 1; attempt <= MAX_SEND_ATTEMPTS && reply == null; attempt++) {
+            socket.send(requestPacket);
+            System.out.printf(
+                    "[REQUEST] Sent MONITOR attempt %d/%d; waiting for reply and events...%n",
+                    attempt,
+                    MAX_SEND_ATTEMPTS);
+
+            long attemptDeadline = System.nanoTime()
+                    + TimeUnit.MILLISECONDS.toNanos(RECEIVE_TIMEOUT_MILLIS);
+            while (true) {
+                Message incoming = receiveNextServerMessage(attemptDeadline);
+                if (incoming == null) {
+                    break;
+                }
+                if (isMatchingReply(incoming, request)) {
+                    reply = incoming;
+                    break;
+                }
+                if (isMatchingMonitorEvent(incoming, request)) {
+                    long sequence = deliverMonitorEvent(
+                            incoming, flightId, highestEventSequence, onEvent);
+                    if (sequence > highestEventSequence) {
+                        highestEventSequence = sequence;
+                    }
+                }
+            }
+        }
+
+        if (reply == null) {
+            throw new IOException(
+                    "Monitor registration status is unknown after "
+                            + MAX_SEND_ATTEMPTS
+                            + " attempts");
+        }
+
+        MessageCodec.BodyReader replyReader = successReader(reply);
+        int availableSeats = replyReader.readI32();
+        long remainingMillis = replyReader.readU32();
+        if (availableSeats < 0 || remainingMillis > 600_000) {
+            throw new ProtocolException("Invalid MONITOR reply");
+        }
+        completeReply(reply, replyReader);
+        onRegistered.accept(new MonitorRegistration(availableSeats, remainingMillis));
+
+        if (remainingMillis == 0) {
+            return;
+        }
+        long monitorDeadline = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(remainingMillis);
+        while (true) {
+            Message incoming = receiveNextServerMessage(monitorDeadline);
+            if (incoming == null) {
+                return;
+            }
+            if (isMatchingMonitorEvent(incoming, request)) {
+                long sequence = deliverMonitorEvent(
+                        incoming, flightId, highestEventSequence, onEvent);
+                if (sequence > highestEventSequence) {
+                    highestEventSequence = sequence;
+                }
+            }
+        }
     }
 
     float setFare(int flightId, float newFare) throws IOException, ProtocolException {
@@ -186,12 +275,25 @@ final class FlightClient implements AutoCloseable {
                 + TimeUnit.MILLISECONDS.toNanos(RECEIVE_TIMEOUT_MILLIS);
 
         while (true) {
-            long remainingNanos = deadline - System.nanoTime();
+            Message reply = receiveNextServerMessage(deadline);
+            if (reply == null) {
+                return null;
+            }
+
+            if (isMatchingReply(reply, request)) {
+                return reply;
+            }
+        }
+    }
+
+    private Message receiveNextServerMessage(long deadlineNanos) throws IOException {
+        while (true) {
+            long remainingNanos = deadlineNanos - System.nanoTime();
             if (remainingNanos <= 0) {
                 return null;
             }
 
-            // 非匹配数据报不会重新开始 800 ms 计时。
+            // 非匹配数据报不会重新开始当前等待计时。
             int remainingMillis = (int) Math.max(
                     1, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
             socket.setSoTimeout(remainingMillis);
@@ -209,21 +311,64 @@ final class FlightClient implements AutoCloseable {
                 continue;
             }
 
-            Message reply;
+            Message message;
             try {
-                reply = MessageCodec.decode(packet.getData(), packet.getOffset(), packet.getLength());
+                message = MessageCodec.decode(
+                        packet.getData(), packet.getOffset(), packet.getLength());
             } catch (ProtocolException exception) {
-                System.out.println("[DROP] Invalid reply: " + exception.getMessage());
+                System.out.println("[DROP] Invalid server message: " + exception.getMessage());
                 continue;
             }
+            return message;
+        }
+    }
 
-            // 四个字段全部匹配，才能确定这是当前请求的回复。
-            if (reply.messageType() == Protocol.MessageType.REPLY
-                    && reply.operation() == request.operation()
-                    && reply.clientId() == request.clientId()
-                    && reply.requestId() == request.requestId()) {
-                return reply;
+    private static boolean isMatchingReply(Message message, Message request) {
+        return message.messageType() == Protocol.MessageType.REPLY
+                && message.operation() == request.operation()
+                && message.clientId() == request.clientId()
+                && message.requestId() == request.requestId();
+    }
+
+    private static boolean isMatchingMonitorEvent(Message message, Message request) {
+        return message.messageType() == Protocol.MessageType.EVENT
+                && message.operation() == Protocol.Operation.MONITOR
+                && message.clientId() == request.clientId()
+                && message.requestId() == request.requestId();
+    }
+
+    private static long deliverMonitorEvent(
+            Message message,
+            int expectedFlightId,
+            long highestEventSequence,
+            Consumer<MonitorEvent> onEvent) {
+        try {
+            MessageCodec.BodyReader reader = MessageCodec.bodyReader(message.body());
+            int flightId = reader.readI32();
+            int availableSeats = reader.readI32();
+            long eventSequence = reader.readU32();
+            long eventUtcMillis = reader.readI64();
+            reader.requireFullyRead();
+
+            if (flightId != expectedFlightId
+                    || availableSeats < 0
+                    || eventSequence == 0) {
+                throw new ProtocolException("Invalid MONITOR event fields");
             }
+            if (eventSequence <= highestEventSequence) {
+                System.out.println("[DROP] Duplicate or old MONITOR event sequence="
+                        + eventSequence);
+                return highestEventSequence;
+            }
+            onEvent.accept(new MonitorEvent(
+                    flightId,
+                    availableSeats,
+                    eventSequence,
+                    eventUtcMillis));
+            return eventSequence;
+        } catch (ProtocolException exception) {
+            System.out.println("[DROP] Invalid MONITOR event: " + exception.getMessage());
+            return highestEventSequence;
         }
     }
 
@@ -268,6 +413,58 @@ final class FlightClient implements AutoCloseable {
 
         int availableSeats() {
             return availableSeats;
+        }
+    }
+
+    static final class MonitorRegistration {
+        private final int availableSeats;
+        private final long remainingMillis;
+
+        MonitorRegistration(int availableSeats, long remainingMillis) {
+            this.availableSeats = availableSeats;
+            this.remainingMillis = remainingMillis;
+        }
+
+        int availableSeats() {
+            return availableSeats;
+        }
+
+        long remainingMillis() {
+            return remainingMillis;
+        }
+    }
+
+    static final class MonitorEvent {
+        private final int flightId;
+        private final int availableSeats;
+        private final long eventSequence;
+        private final long eventUtcMillis;
+
+        MonitorEvent(
+                int flightId,
+                int availableSeats,
+                long eventSequence,
+                long eventUtcMillis) {
+            this.flightId = flightId;
+            this.availableSeats = availableSeats;
+            this.eventSequence = eventSequence;
+            this.eventUtcMillis = eventUtcMillis;
+        }
+
+        int flightId() {
+            return flightId;
+        }
+
+        int availableSeats() {
+            return availableSeats;
+        }
+
+        long eventSequence() {
+            return eventSequence;
+        }
+
+        long eventUtcMillis() {
+            return eventUtcMillis;
         }
     }
 }
