@@ -345,7 +345,7 @@ static FcStatus invoke(FlightClient *c, int operation, const FpWriter *body,
 /* 回复确认与解析                                                      */
 /* ------------------------------------------------------------------ */
 
-/* 确认只帮助服务端提前清理缓存；发送失败时服务端仍有 60 秒 TTL 兜底 */
+/* 确认只帮助服务端提前清理缓存；发送失败不改变已取得的结果，服务端仍有 60 秒 TTL 兜底 */
 static void send_acknowledgement(FlightClient *c, const FpMessage *reply) {
     FpMessage ack;
     uint8_t encoded[FP_MAX_DATAGRAM_LENGTH];
@@ -374,7 +374,9 @@ static void send_acknowledgement(FlightClient *c, const FpMessage *reply) {
 
 /*
  * 对应 successReader：读 status；成功则把 reader 停在 status 之后；
- * 业务错误则解析错误说明、发 ACK，并返回 FC_ERR_SERVER。
+ * 业务错误则解析错误说明并返回 FC_ERR_SERVER。
+ * 协议规定：只确认 status=0 的成功回复，错误回复不发送 ACK
+ * （其缓存由服务端 60 秒 TTL 或后续更高编号的请求清理）。
  */
 static FcStatus success_reader(FlightClient *c, const FpMessage *reply, FpReader *reader) {
     int status;
@@ -395,7 +397,14 @@ static FcStatus success_reader(FlightClient *c, const FpMessage *reply, FpReader
     fp_read_string(reader, description, sizeof description);
     fp_require_fully_read(reader);
     RETURN_IF_READER_FAILED(c, *reader);
-    send_acknowledgement(c, reply);
+
+    /* STALE_REQUEST 不能解释为"操作一定失败"，必须说明执行结果未知 */
+    if (status == FP_STATUS_STALE_REQUEST) {
+        return fail(c, FC_ERR_SERVER,
+                    "Server has already seen this request, but its cached result is no "
+                    "longer available; execution result is unknown: %s",
+                    description);
+    }
     return fail(c, FC_ERR_SERVER, "Server returned an error (status=%d): %s", status,
                 description);
 }

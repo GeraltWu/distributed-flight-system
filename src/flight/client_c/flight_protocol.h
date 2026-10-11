@@ -40,7 +40,7 @@ enum {
     FP_MSG_REQUEST = 1,
     FP_MSG_REPLY = 2,
     FP_MSG_EVENT = 3,
-    FP_MSG_ACK = 4 /* Java 实现里存在，protocol.md 尚未记载 */
+    FP_MSG_ACK = 4 /* 回复确认：只确认成功回复，消息体为空 */
 };
 
 enum {
