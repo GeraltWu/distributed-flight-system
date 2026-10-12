@@ -11,7 +11,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Scanner;
 
-/** 客户端控制台入口。 */
+/**
+ * Client console entry point.
+ * 客户端控制台入口。
+ */
 public final class ClientMain {
     private static final DateTimeFormatter SINGAPORE_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss 'SGT'")

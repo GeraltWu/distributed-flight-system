@@ -1,10 +1,14 @@
 /*
  * flight_protocol.h
  *
+ * C protocol layer, corresponding to Java Protocol / Message / MessageCodec / ProtocolException.
  * C 版协议层，对应 Java 的 Protocol / Message / MessageCodec / ProtocolException。
+ * Fields, offsets, and values match protocol.md and the Java client.
  * 字段、偏移和取值与 protocol.md 以及 Java 客户端保持一致。
  *
+ * Error handling: where Java throws ProtocolException, return nonzero or set the failed flag.
  * 错误处理约定：Java 里抛 ProtocolException 的地方，这里返回非 0 / 置 failed 标志，
+ * Write the explanation into the caller-provided buffer.
  * 并把说明文字写入调用者提供的缓冲区。
  */
 #ifndef FLIGHT_PROTOCOL_H
@@ -13,6 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Constants from Protocol.java. */
 /* ---------- Protocol.java 中的常量 ---------- */
 #define FP_MAGIC_FIRST 0x46  /* 'F' */
 #define FP_MAGIC_SECOND 0x49 /* 'I' */
@@ -33,6 +38,7 @@
 #define FP_BODY_LENGTH_OFFSET 21
 #define FP_BODY_OFFSET FP_HEADER_LENGTH
 
+/* Recommended error-message buffer size. */
 /* 错误说明缓冲区的建议大小 */
 #define FP_ERR_LEN 128
 
@@ -40,6 +46,7 @@ enum {
     FP_MSG_REQUEST = 1,
     FP_MSG_REPLY = 2,
     FP_MSG_EVENT = 3,
+    /* Reply acknowledgement: acknowledge only successful replies, with an empty body. */
     FP_MSG_ACK = 4 /* 回复确认：只确认成功回复，消息体为空 */
 };
 
@@ -62,31 +69,37 @@ enum {
     FP_STATUS_STALE_REQUEST = 6
 };
 
+/* Message: a complete protocol message, passed/copied by value. */
 /* ---------- Message：一条完整的协议消息（按值传递/拷贝） ---------- */
 typedef struct {
     uint8_t message_type;
     uint8_t operation;
+    /* u64: C supports unsigned 64-bit integers natively, without Java's bit-pattern workaround. */
     uint64_t client_id; /* u64，C 有原生无符号 64 位，不需要 Java 的位模式技巧 */
     uint64_t request_id;
     uint16_t body_length;
     uint8_t body[FP_MAX_BODY_LENGTH];
 } FpMessage;
 
+/* These functions return 0 on success or -1 on failure, writing the reason into err with capacity errcap. */
 /* 以下函数成功返回 0；失败返回 -1，并把原因写入 err（长度 errcap）。 */
 int fp_make_request(FpMessage *out, int operation, uint64_t client_id,
                     uint64_t request_id, const uint8_t *body, size_t body_length,
                     char *err, size_t errcap);
 int fp_make_ack(FpMessage *out, const FpMessage *reply, char *err, size_t errcap);
 
+/* Encode into out with capacity at least FP_MAX_DATAGRAM_LENGTH; return the datagram length. */
 /* 编码到 out（容量至少 FP_MAX_DATAGRAM_LENGTH），返回数据报长度。 */
 size_t fp_encode(const FpMessage *message, uint8_t *out);
 
+/* Decode exactly one complete datagram. */
 /* 解码恰好一个完整数据报。 */
 int fp_decode(const uint8_t *data, size_t length, FpMessage *out, char *err,
               size_t errcap);
 
 const char *fp_operation_name(int operation);
 
+/* BodyWriter: errors are sticky; check failed after writing. */
 /* ---------- BodyWriter：错误是"粘性"的，写完后检查 failed 即可 ---------- */
 typedef struct {
     uint8_t buf[FP_MAX_BODY_LENGTH];
@@ -102,8 +115,10 @@ void fp_write_u32(FpWriter *w, int64_t value);
 void fp_write_i32(FpWriter *w, int32_t value);
 void fp_write_i64(FpWriter *w, int64_t value);
 void fp_write_float32(FpWriter *w, float value);
+/* The input must be valid UTF-8. */
 void fp_write_string(FpWriter *w, const char *utf8); /* 要求是合法 UTF-8 */
 
+/* BodyReader: out-of-bounds reads or invalid strings set failed and return 0. */
 /* ---------- BodyReader：读越界或字符串非法时置 failed，并返回 0 ---------- */
 typedef struct {
     const uint8_t *buf;
@@ -120,6 +135,7 @@ uint32_t fp_read_u32(FpReader *r);
 int32_t fp_read_i32(FpReader *r);
 int64_t fp_read_i64(FpReader *r);
 float fp_read_float32(FpReader *r);
+/* Read a u16 length and UTF-8 bytes, validate, copy into out, and append '\0'; cap includes the terminator. */
 /* 读 u16 长度 + UTF-8 字节，校验合法性后复制到 out 并补 '\0'；cap 含结尾 '\0'。 */
 void fp_read_string(FpReader *r, char *out, size_t cap);
 size_t fp_remaining(const FpReader *r);

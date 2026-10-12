@@ -13,14 +13,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** 保存航班数据并提供业务查询。 */
+/**
+ * Stores flight data and provides business queries.
+ * 保存航班数据并提供业务查询。
+ */
 final class FlightService {
     private final Map<Integer, Flight> flights = new HashMap<>();
 
     private FlightService() {
     }
 
-    /** 从 TSV 文件读取初始数据，运行期间仍在内存中维护航班。 */
+    /**
+     * Load initial data from a TSV file and maintain flights in memory during execution.
+     * 从 TSV 文件读取初始数据，运行期间仍在内存中维护航班。
+     */
     static FlightService load(Path path) throws IOException {
         List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
         if (lines.isEmpty()
@@ -49,6 +55,7 @@ final class FlightService {
                 float fare = Float.parseFloat(fields[4]);
                 int availableSeats = Integer.parseInt(fields[5]);
 
+                // These limits match protocol business-field ranges, preventing data that cannot be transmitted correctly.
                 // 这些限制与协议的业务字段范围一致，避免载入无法正常传输的数据。
                 if (id <= 0) {
                     throw invalidLine(lineNumber, "flight ID must be positive");
@@ -93,6 +100,7 @@ final class FlightService {
             }
         }
 
+        // A fixed sort order keeps pagination stable throughout this server run.
         // 固定排序使分页在本次服务端运行期间保持稳定。
         Collections.sort(matches);
         return matches;

@@ -7,16 +7,23 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
 
-/** UDP 协议的手写编解码器，只按偏移操作字节数组。 */
+/**
+ * Manual UDP protocol codec operating on byte arrays by offset.
+ * UDP 协议的手写编解码器，只按偏移操作字节数组。
+ */
 public final class MessageCodec {
     private MessageCodec() {
     }
 
-    /** 把一条消息编码成一个 UDP 应用层载荷。 */
+    /**
+     * Encode a message into one UDP application payload.
+     * 把一条消息编码成一个 UDP 应用层载荷。
+     */
     public static byte[] encode(Message message) {
         Objects.requireNonNull(message, "message");
         byte[] body = message.body();
 
+        // The Message constructor already validates fields and body length; write them at fixed offsets here.
         // Message 构造时已经校验字段和消息体长度，这里只按固定偏移写入。
         byte[] datagram = new byte[Protocol.HEADER_LENGTH + body.length];
         datagram[Protocol.MAGIC_OFFSET] = (byte) Protocol.MAGIC_FIRST;
@@ -31,18 +38,25 @@ public final class MessageCodec {
         return datagram;
     }
 
-    /** 解码恰好包含一个完整数据报的字节数组。 */
+    /**
+     * Decode a byte array containing exactly one complete datagram.
+     * 解码恰好包含一个完整数据报的字节数组。
+     */
     public static Message decode(byte[] datagram) throws ProtocolException {
         Objects.requireNonNull(datagram, "datagram");
         return decode(datagram, 0, datagram.length);
     }
 
-    /** 解码从 {@code offset} 开始的 {@code length} 个字节，供 DatagramPacket 直接调用。 */
+    /**
+     * Decode {@code length} bytes starting at {@code offset}, for direct use with DatagramPacket.
+     * 解码从 {@code offset} 开始的 {@code length} 个字节，供 DatagramPacket 直接调用。
+     */
     public static Message decode(byte[] datagram, int offset, int length)
             throws ProtocolException {
         Objects.requireNonNull(datagram, "datagram");
         checkSlice(datagram.length, offset, length);
 
+        // Check the outer length first so later fixed-header reads remain within bounds.
         // 先检查外层长度，之后读取固定头字段时才不会越界。
         if (length < Protocol.HEADER_LENGTH) {
             throw new ProtocolException(
@@ -53,6 +67,7 @@ public final class MessageCodec {
                     "Datagram exceeds " + Protocol.MAX_DATAGRAM_LENGTH + " bytes: " + length);
         }
 
+        // If magic or version is invalid, the field layout is untrustworthy; reject the entire packet.
         // magic 和 version 不正确时，后面的字段布局不再可信，整包直接拒绝。
         if (readU8(datagram, offset + Protocol.MAGIC_OFFSET) != Protocol.MAGIC_FIRST
                 || readU8(datagram, offset + Protocol.MAGIC_OFFSET + 1)
@@ -71,6 +86,7 @@ public final class MessageCodec {
         }
 
         int operation = readU8(datagram, offset + Protocol.OPERATION_OFFSET);
+        // Do not reject an unknown operation here; the server business layer returns UNSUPPORTED.
         // 未知 operation 在这里不报错，服务端业务层会返回 UNSUPPORTED。
         if (messageType == Protocol.MessageType.EVENT
                 && operation != Protocol.Operation.MONITOR) {
@@ -86,6 +102,7 @@ public final class MessageCodec {
         if (bodyLength > Protocol.MAX_BODY_LENGTH) {
             throw new ProtocolException("Body is too large: " + bodyLength);
         }
+        // Require an exact length match, rejecting both truncated bodies and extra trailing bytes.
         // 必须恰好相等，同时拒绝被截断的消息体和消息体后的多余字节。
         if (length != Protocol.HEADER_LENGTH + bodyLength) {
             throw new ProtocolException(
@@ -103,12 +120,18 @@ public final class MessageCodec {
         return new Message(messageType, operation, clientId, requestId, body);
     }
 
-    /** 创建操作消息体的写入器。 */
+    /**
+     * Create a writer for operation message bodies.
+     * 创建操作消息体的写入器。
+     */
     public static BodyWriter bodyWriter() {
         return new BodyWriter();
     }
 
-    /** 创建操作消息体的读取器。 */
+    /**
+     * Create a reader for operation message bodies.
+     * 创建操作消息体的读取器。
+     */
     public static BodyReader bodyReader(byte[] body) {
         return new BodyReader(body);
     }
@@ -158,6 +181,7 @@ public final class MessageCodec {
         }
 
         public BodyWriter writeFloat32(float value) throws ProtocolException {
+            // Write the raw 32-bit IEEE 754 pattern without numeric conversion.
             // 不做数值转换，直接写入 IEEE 754 的 32 位位模式。
             return writeI32(Float.floatToRawIntBits(value));
         }
@@ -166,7 +190,9 @@ public final class MessageCodec {
             Objects.requireNonNull(value, "value");
             byte[] encoded = encodeUtf8(value);
 
+            // Encode the UTF-8 byte count, not the Java character count.
             // 长度写的是 UTF-8 字节数，不是 Java 字符数。
+            // The body is at most 525 bytes, so its length also fits in u16.
             // 消息体最多 525 字节，所以一定也能放入 u16。
             ensureWritable(2 + encoded.length);
             MessageCodec.writeU16(buffer, position, encoded.length);
@@ -198,6 +224,7 @@ public final class MessageCodec {
                 throw new IllegalArgumentException(
                         "Body exceeds " + Protocol.MAX_BODY_LENGTH + " bytes");
             }
+            // The reader consumes the body sequentially within this call, without making another copy.
             // 读取器只在当前调用中顺序读取，不再额外复制这段小消息体。
             this.buffer = body;
         }
@@ -240,6 +267,7 @@ public final class MessageCodec {
         }
 
         public String readString() throws ProtocolException {
+            // Read the u16 byte length, then decode only that segment; invalid UTF-8 throws an exception.
             // 先读 u16 字节长度，再只解码这一段；非法 UTF-8 会抛出异常。
             int byteLength = readU16();
             ensureReadable(byteLength);
@@ -253,6 +281,7 @@ public final class MessageCodec {
         }
 
         public void requireFullyRead() throws ProtocolException {
+            // Every operation has a fixed field order; extra trailing bytes are also a format error.
             // 每种 operation 都有固定字段顺序，多出的尾部字节同样属于格式错误。
             if (position != buffer.length) {
                 throw new ProtocolException(
@@ -290,6 +319,7 @@ public final class MessageCodec {
     }
 
     private static byte[] encodeUtf8(String value) {
+        // Encode Java strings directly; strict UTF-8 validation applies only to untrusted network input.
         // Java 字符串直接编码即可；严格 UTF-8 检查只用于不可信的网络输入。
         return value.getBytes(StandardCharsets.UTF_8);
     }
@@ -297,6 +327,7 @@ public final class MessageCodec {
     private static String decodeUtf8(byte[] bytes, int offset, int length)
             throws ProtocolException {
         try {
+            // The default decoder masks errors with replacement characters; require rejection of invalid UTF-8 instead.
             // 默认解码器会用替代字符掩盖错误，这里要求直接拒绝非法 UTF-8。
             return StandardCharsets.UTF_8
                     .newDecoder()
@@ -309,6 +340,7 @@ public final class MessageCodec {
         }
     }
 
+    // The following methods implement network byte order explicitly with shifts, without DataInputStream/DataOutputStream.
     // 以下方法用移位显式实现网络字节序，不依赖 DataInputStream/DataOutputStream。
     private static int readU8(byte[] bytes, int offset) {
         return bytes[offset] & 0xff;

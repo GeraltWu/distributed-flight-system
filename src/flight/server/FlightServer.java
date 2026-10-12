@@ -11,7 +11,10 @@ import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
 
-/** 接收 UDP 请求并调用航班服务。 */
+/**
+ * Receives UDP requests and invokes the flight service.
+ * 接收 UDP 请求并调用航班服务。
+ */
 final class FlightServer {
     private static final int RECEIVE_TIMEOUT_MILLIS = 200;
 
@@ -47,6 +50,7 @@ final class FlightServer {
                     socket.receive(packet);
                     processPacket(socket, packet);
                 } catch (SocketTimeoutException exception) {
+                    // Wake periodically to clean up history; a receive timeout is not itself an error.
                     // 定期醒来清理历史；接收超时本身不是错误。
                 }
 
@@ -61,9 +65,11 @@ final class FlightServer {
     private void processPacket(DatagramSocket socket, DatagramPacket packet) {
         Message message;
         try {
+            // The DatagramPacket buffer may exceed the actual payload; decode only the received range.
             // DatagramPacket 的缓冲区可能比实际数据长，只解码收到的有效区间。
             message = MessageCodec.decode(packet.getData(), packet.getOffset(), packet.getLength());
         } catch (ProtocolException exception) {
+            // An untrustworthy header cannot safely supply clientId/requestId; log and discard it.
             // 头部不可信时无法安全复制 clientId/requestId，因此只记录并丢弃。
             System.out.println("[DROP] Invalid datagram: " + exception.getMessage());
             return;
@@ -86,6 +92,7 @@ final class FlightServer {
                 Protocol.operationName(message.operation()),
                 message.operation());
 
+        // Request loss occurs before business processing and history recording.
         // 请求丢失发生在业务处理和 history 记录之前。
         if (lossSimulator.shouldDropRequest(message)) {
             System.out.printf(
@@ -97,6 +104,7 @@ final class FlightServer {
         }
 
         try {
+            // Malformed requests do not enter history or advance the highest request ID.
             // 格式错误的请求不进入 history，也不占用最高请求编号。
             requestHandler.validateRequestBody(message);
             if (mode == InvocationMode.AT_MOST_ONCE) {
@@ -122,6 +130,7 @@ final class FlightServer {
 
         switch (decision) {
             case NEW_REQUEST:
+                // Cache the reply before sending; retransmissions will not repeat the operation even if the reply is lost.
                 // 先保存回复再发送；即使回复丢失，重传也不会再次执行业务操作。
                 Message reply = executeAndNotify(socket, packet, request);
                 long monitorExpiresAtNanos = request.operation() == Protocol.Operation.MONITOR
@@ -251,6 +260,7 @@ final class FlightServer {
                     requestPacket,
                     requestHandler.errorReply(request, status, description));
         } catch (ProtocolException exception) {
+            // Built-in error explanations are short; failure here indicates a server-side encoding problem to log.
             // 内置错误说明都很短；若这里失败，只记录服务端自身的编码问题。
             System.out.println("[ERROR] Failed to encode error reply: "
                     + exception.getMessage());
@@ -259,6 +269,7 @@ final class FlightServer {
 
     private void sendReply(
             DatagramSocket socket, DatagramPacket requestPacket, Message reply) {
+        // The reply is already built; dropping it skips socket.send while preserving the at-most-once cache.
         // 回复已经生成，丢弃时不调用 socket.send；至多一次缓存仍然保留。
         if (lossSimulator.shouldDropReply(reply)) {
             System.out.printf(
@@ -277,6 +288,7 @@ final class FlightServer {
                 requestPacket.getPort());
 
         try {
+            // Send replies to the actual source address and port of the request datagram.
             // 回复必须发回请求数据报的真实来源地址和端口。
             socket.send(replyPacket);
             System.out.printf(

@@ -1,14 +1,20 @@
 package flight.protocol;
 
-/** protocol.md 定义的报文字段、偏移和取值常量。 */
+/**
+ * Message field, offset, and value constants defined in protocol.md.
+ * protocol.md 定义的报文字段、偏移和取值常量。
+ */
 public final class Protocol {
     private Protocol() {
     }
 
+    // Character F.
     public static final int MAGIC_FIRST = 0x46;  // 字符 F
+    // Character I.
     public static final int MAGIC_SECOND = 0x49; // 字符 I
     public static final int VERSION = 1;
 
+    // protocol.md fixes the datagram size; subtract the header length to obtain the body limit.
     // 数据报大小由 protocol.md 固定，消息体上限由总长度减去消息头得到。
     public static final int HEADER_LENGTH = 23;
     public static final int MAX_DATAGRAM_LENGTH = 548;
@@ -16,6 +22,7 @@ public final class Protocol {
     public static final int MAX_ERROR_TEXT_LENGTH = 512;
     public static final int MAX_ROUTE_RESULTS_PER_PAGE = 100;
 
+    // All offsets start at the first byte of the UDP application payload.
     // 所有偏移都从 UDP 应用层载荷的第一个字节开始计算。
     public static final int MAGIC_OFFSET = 0;
     public static final int VERSION_OFFSET = 2;

@@ -1,6 +1,7 @@
 /*
  * flight_protocol.c
  *
+ * Manual network-byte-order encoding/decoding using byte-array offsets, without serialization libraries.
  * 手写的网络字节序编码/解码，只按偏移读写字节数组，不使用任何序列化库。
  */
 #include "flight_protocol.h"
@@ -9,10 +10,12 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Require a four-byte float to copy IEEE 754 bits directly, corresponding to Float.floatToRawIntBits. */
 /* 保证 float 是 4 字节，才能直接搬运 IEEE 754 位模式（对应 Float.floatToRawIntBits）。 */
 typedef char fp_assert_float_is_32_bits[(sizeof(float) == 4) ? 1 : -1];
 
 /* ------------------------------------------------------------------ */
+/* Error messages. */
 /* 错误文字                                                            */
 /* ------------------------------------------------------------------ */
 static void set_error(char *err, size_t cap, const char *fmt, ...) {
@@ -26,6 +29,7 @@ static void set_error(char *err, size_t cap, const char *fmt, ...) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Big-endian reads and writes using shifts, without htonl/ntohl. */
 /* 大端字节序读写（用移位实现，不依赖 htonl/ntohl）                   */
 /* ------------------------------------------------------------------ */
 static uint16_t get_u16(const uint8_t *p) {
@@ -59,7 +63,9 @@ static void put_u64(uint8_t *p, uint64_t v) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Strict UTF-8 validation: reject overlong encodings, surrogates, and code points above U+10FFFF. */
 /* 严格的 UTF-8 校验（拒绝过长编码、代理区、超过 U+10FFFF 的码点）    */
+/* Corresponds to Java's CodingErrorAction.REPORT behavior. */
 /* 对应 Java 里 CodingErrorAction.REPORT 的行为                        */
 /* ------------------------------------------------------------------ */
 static int utf8_is_valid(const uint8_t *s, size_t n) {
@@ -87,6 +93,7 @@ static int utf8_is_valid(const uint8_t *s, size_t n) {
             return 0;
         }
         if (n - i <= extra) {
+            /* The input ends with a truncated sequence. */
             return 0; /* 末尾被截断 */
         }
         for (k = 1; k <= extra; k++) {
@@ -114,6 +121,7 @@ static int known_message_type(int t) {
            t == FP_MSG_ACK;
 }
 
+/* Corresponds to the checks in the Java Message constructor. */
 /* 对应 Java Message 构造函数里的检查。 */
 static int validate_fields(int message_type, int operation, uint64_t request_id,
                            size_t body_length, char *err, size_t errcap) {
@@ -193,6 +201,7 @@ int fp_decode(const uint8_t *d, size_t length, FpMessage *out, char *err,
     uint64_t client_id, request_id;
     size_t body_length;
 
+    /* Check the outer length first so subsequent fixed-header reads stay within bounds. */
     /* 先检查外层长度，之后读固定头字段才不会越界。 */
     if (length < FP_HEADER_LENGTH) {
         set_error(err, errcap, "Datagram is shorter than the %d-byte header",
@@ -235,6 +244,7 @@ int fp_decode(const uint8_t *d, size_t length, FpMessage *out, char *err,
         set_error(err, errcap, "Body is too large: %zu", body_length);
         return -1;
     }
+    /* Require an exact length match: reject both truncated bodies and trailing bytes. */
     /* 必须恰好相等：同时拒绝被截断的消息体和消息体后多余的字节。 */
     if (length != (size_t)FP_HEADER_LENGTH + body_length) {
         set_error(err, errcap,
@@ -289,6 +299,7 @@ void fp_writer_init(FpWriter *w) {
 static void writer_fail(FpWriter *w, const char *fmt, ...) {
     va_list args;
     if (w->failed) {
+        /* Keep only the first error. */
         return; /* 只保留第一个错误 */
     }
     w->failed = 1;
@@ -360,11 +371,13 @@ void fp_write_i64(FpWriter *w, int64_t value) {
 
 void fp_write_float32(FpWriter *w, float value) {
     uint32_t bits;
+    /* Copy the IEEE 754 bit pattern directly without numeric conversion. */
     memcpy(&bits, &value, sizeof bits); /* 不做数值转换，直接搬运 IEEE 754 位模式 */
     fp_write_i32(w, (int32_t)bits);
 }
 
 void fp_write_string(FpWriter *w, const char *utf8) {
+    /* The length is the UTF-8 byte count, not the character count. */
     size_t length = strlen(utf8); /* 长度写的是 UTF-8 字节数，不是字符数 */
     if (w->failed) {
         return;
@@ -491,6 +504,7 @@ void fp_read_string(FpReader *r, char *out, size_t cap) {
 }
 
 void fp_require_fully_read(FpReader *r) {
+    /* Each operation has a fixed field order; trailing bytes are also a format error. */
     /* 每种 operation 字段顺序固定，多出的尾部字节同样属于格式错误。 */
     if (!r->failed && r->pos != r->len) {
         reader_fail(r, "Message body contains %zu unexpected trailing bytes",
