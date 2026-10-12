@@ -10,7 +10,10 @@ import java.text.Normalizer;
 import java.net.InetSocketAddress;
 import java.util.List;
 
-/** 解码业务参数、执行航班操作并构造协议回复。 */
+/**
+ * Decodes business parameters, executes flight operations, and builds protocol replies.
+ * 解码业务参数、执行航班操作并构造协议回复。
+ */
 final class FlightRequestHandler {
     private final FlightService flightService;
     private final MonitorRegistry monitorRegistry;
@@ -20,7 +23,10 @@ final class FlightRequestHandler {
         this.monitorRegistry = monitorRegistry;
     }
 
-    /** 只检查消息体结构；业务取值错误由具体操作返回 BAD_ARGUMENT。 */
+    /**
+     * Check only body structure; individual operations return BAD_ARGUMENT for invalid business values.
+     * 只检查消息体结构；业务取值错误由具体操作返回 BAD_ARGUMENT。
+     */
     void validateRequestBody(Message request) throws ProtocolException {
         MessageCodec.BodyReader reader = MessageCodec.bodyReader(request.body());
         switch (request.operation()) {
@@ -46,6 +52,7 @@ final class FlightRequestHandler {
                 reader.readFloat32();
                 break;
             default:
+                // Unknown operations have no body format to validate; the execution phase returns UNSUPPORTED.
                 // 未知操作没有可验证的消息体格式，执行阶段返回 UNSUPPORTED。
                 return;
         }

@@ -3,7 +3,10 @@ package flight.server;
 import java.io.IOException;
 import java.nio.file.Paths;
 
-/** 服务端启动入口。 */
+/**
+ * Server startup entry point.
+ * 服务端启动入口。
+ */
 public final class ServerMain {
     private ServerMain() {
     }

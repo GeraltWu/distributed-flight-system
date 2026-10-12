@@ -1,7 +1,9 @@
 /*
  * client_main.c
  *
+ * Console entry point, corresponding to Java ClientMain.
  * 控制台入口，对应 Java 的 ClientMain。
+ * Usage from the project root: ./out/client_c/flight_client <server-host> <server-port>
  * 项目根目录用法：./out/client_c/flight_client <server-host> <server-port>
  */
 #include "flight_client.h"
@@ -18,12 +20,15 @@
 
 #define LINE_CAP 1024
 
+/* Set to 1 at end of standard input so the menu loop can exit. */
 static int g_eof = 0; /* 标准输入结束时置 1，菜单循环据此退出 */
 
 /* ------------------------------------------------------------------ */
+/* Input helpers. */
 /* 输入辅助                                                            */
 /* ------------------------------------------------------------------ */
 
+/* Read a line and remove its trailing newline; return 1 on success, or 0 on EOF or an oversized line. */
 /* 读一行并去掉结尾换行。成功返回 1；EOF 或行过长返回 0。 */
 static int read_line(char *buf, size_t cap) {
     size_t n;
@@ -39,6 +44,7 @@ static int read_line(char *buf, size_t cap) {
         }
         return 1;
     }
+    /* No newline means either an oversized line or a final line without a newline. */
     /* 没有换行：要么行太长，要么最后一行没有换行符 */
     {
         int ch, too_long = 0;
@@ -46,6 +52,7 @@ static int read_line(char *buf, size_t cap) {
             too_long = 1;
         }
         if (ch == EOF && !too_long) {
+            /* A final line without a newline is valid. */
             return 1; /* 末行无换行，正常 */
         }
         if (ch == EOF) {
@@ -74,6 +81,7 @@ static int prompt_line(const char *prompt, char *buf, size_t cap) {
     return read_line(buf, cap);
 }
 
+/* Parse an integer strictly: reject empty input and trailing characters, and check the range. */
 /* 严格解析整数：不允许空串、不允许多余字符，并检查范围 */
 static int parse_int64(const char *text, int64_t min, int64_t max, int64_t *out) {
     char copy[LINE_CAP];
@@ -94,6 +102,7 @@ static int parse_int64(const char *text, int64_t min, int64_t max, int64_t *out)
     return 1;
 }
 
+/* Read an int32; on failure, print the same prompt as Java and return 0. */
 /* 读一个 int32；失败时打印与 Java 相同的提示并返回 0 */
 static int read_int(const char *prompt, int32_t *out) {
     char line[LINE_CAP];
@@ -139,6 +148,7 @@ static int read_float(const char *prompt, float *out) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Display times with an explicit timezone: Singapore time, UTC+8, without daylight saving time. */
 /* 时间显示：明确标注时区（新加坡时间，UTC+8，无夏令时）               */
 /* ------------------------------------------------------------------ */
 static void format_sgt(int64_t epoch_seconds, char *buf, size_t cap) {
@@ -155,6 +165,7 @@ static int64_t floor_div(int64_t a, int64_t b) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Menu operations. */
 /* 菜单操作                                                            */
 /* ------------------------------------------------------------------ */
 static void report_failure(FlightClient *client) {
@@ -323,6 +334,7 @@ int main(int argc, char **argv) {
     char *end;
 
 #if defined(_WIN32)
+    /* Use UTF-8 console input and output so strings such as place names are sent as UTF-8 bytes. */
     /* 让控制台按 UTF-8 收发，地名等字符串才能按 UTF-8 字节发送 */
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);

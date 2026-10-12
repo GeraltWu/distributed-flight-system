@@ -1,6 +1,9 @@
 package flight.server;
 
-/** 客户端和服务端启动时选择的调用语义。 */
+/**
+ * Invocation semantics selected when starting the client and server.
+ * 客户端和服务端启动时选择的调用语义。
+ */
 enum InvocationMode {
     AT_LEAST_ONCE("at-least-once"),
     AT_MOST_ONCE("at-most-once");

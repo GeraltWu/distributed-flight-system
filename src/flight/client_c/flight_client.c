@@ -1,10 +1,13 @@
 /*
  * flight_client.c
  *
+ * Platform support: POSIX (Linux/macOS) and Windows (Winsock) share this implementation.
  * 平台说明：POSIX(Linux/macOS) 与 Windows(Winsock) 共用同一份代码，
+ * Platform differences are isolated in a few small helpers at the beginning of this file.
  * 平台差异只集中在文件开头的少数几个小函数里。
  */
 #if defined(_WIN32)
+/* Enable rand_s() for clientId generation; this definition must precede <stdlib.h>. */
 #define _CRT_RAND_S /* 提供 rand_s()，用来生成 clientId，必须在 <stdlib.h> 之前 */
 #define WIN32_LEAN_AND_MEAN
 #else
@@ -44,6 +47,7 @@ typedef socklen_t socklen_type;
 #define sock_close close
 #endif
 
+/* Match the Java client: wait one second per attempt. */
 #define RECEIVE_TIMEOUT_MILLIS 1000 /* 与 Java 客户端一致：每次等待 1 秒 */
 #define MAX_SEND_ATTEMPTS 4
 #define FC_ERROR_LEN 640
@@ -57,9 +61,11 @@ struct FlightClient {
 };
 
 /* ------------------------------------------------------------------ */
+/* Platform helpers. */
 /* 平台小工具                                                          */
 /* ------------------------------------------------------------------ */
 
+/* Monotonic clock in milliseconds, corresponding to System.nanoTime(); unaffected by wall-clock changes. */
 /* 单调时钟（毫秒）：对应 System.nanoTime()，不受系统时间调整影响 */
 static int64_t now_millis(void) {
 #if defined(_WIN32)
@@ -87,6 +93,7 @@ static int socket_call_interrupted(void) {
 #endif
 }
 
+/* On Windows, recvfrom after sending UDP to a closed port may return WSAECONNRESET; ignore it. */
 /* Windows 上，向已关闭端口发 UDP 后下一次 recvfrom 可能返回 WSAECONNRESET，应忽略 */
 static int socket_error_is_ignorable(void) {
 #if defined(_WIN32)
@@ -96,6 +103,7 @@ static int socket_error_is_ignorable(void) {
 #endif
 }
 
+/* Generate a random clientId on each startup, corresponding to ThreadLocalRandom.nextLong(). */
 /* 每次启动生成随机 clientId，对应 ThreadLocalRandom.nextLong() */
 static uint64_t random_u64(void) {
 #if defined(_WIN32)
@@ -113,6 +121,7 @@ static uint64_t random_u64(void) {
             return value;
         }
     }
+    /* Fallback: mix the time and process ID using splitmix64. */
     /* 兜底：时间 + 进程号混合（splitmix64） */
     {
         struct timespec ts;
@@ -128,6 +137,7 @@ static uint64_t random_u64(void) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Error recording. */
 /* 错误记录                                                            */
 /* ------------------------------------------------------------------ */
 static FcStatus fail(FlightClient *c, FcStatus status, const char *fmt, ...) {
@@ -143,6 +153,7 @@ const char *fc_last_error(const FlightClient *client) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Creation and cleanup. */
 /* 创建与关闭                                                          */
 /* ------------------------------------------------------------------ */
 FlightClient *fc_open(const char *host, uint16_t port, char *err, size_t errcap) {
@@ -164,6 +175,7 @@ FlightClient *fc_open(const char *host, uint16_t port, char *err, size_t errcap)
     }
     c->sock = SOCK_BAD;
 
+    /* The protocol sizes datagrams for IPv4, so resolve only IPv4 addresses. */
     /* 协议按 IPv4 报文长度设计，这里只解析 IPv4 地址 */
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET;
@@ -177,6 +189,7 @@ FlightClient *fc_open(const char *host, uint16_t port, char *err, size_t errcap)
     c->server.sin_port = htons(port);
     freeaddrinfo(res);
 
+    /* Do not bind explicitly: the first sendto assigns an ephemeral port used by the server for callbacks. */
     /* 不 bind：首次 sendto 时系统自动分配临时端口，服务端据此记录回调地址 */
     c->sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (c->sock == SOCK_BAD) {
@@ -207,9 +220,11 @@ void fc_close(FlightClient *c) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Sending and receiving. */
 /* 收发                                                                */
 /* ------------------------------------------------------------------ */
 
+/* Send an encoded datagram; record the reason on failure. */
 /* 发送一个已编码的数据报；失败时记录原因。 */
 static FcStatus send_datagram(FlightClient *c, const uint8_t *data, size_t length) {
     long sent = (long)sendto(c->sock, (const char *)data, (int)length, 0,
@@ -223,8 +238,11 @@ static FcStatus send_datagram(FlightClient *c, const uint8_t *data, size_t lengt
 }
 
 /*
+ * Receive the next valid server message before deadline, measured in monotonic milliseconds.
  * 在 deadline（单调时钟毫秒）之前收下一条合法的服务端消息。
+ * Return 1 for a received message, 0 for a timeout, or -1 for an I/O error.
  * 返回 1：收到；0：超时；-1：I/O 错误。
+ * Discard malformed datagrams or those from other sources without restarting the deadline, as in Java.
  * 非法/来源不符的数据报被丢弃后继续等，且不会重新开始计时（与 Java 一致）。
  */
 static int receive_next_server_message(FlightClient *c, int64_t deadline, FpMessage *out) {
@@ -233,6 +251,7 @@ static int receive_next_server_message(FlightClient *c, int64_t deadline, FpMess
         fd_set readable;
         struct timeval tv;
         int ready;
+        /* Reserve one extra byte to detect oversized datagrams. */
         uint8_t buffer[FP_MAX_DATAGRAM_LENGTH + 1]; /* 多留 1 字节，用来发现超长报文 */
         struct sockaddr_in from;
         socklen_type from_length = sizeof from;
@@ -270,6 +289,7 @@ static int receive_next_server_message(FlightClient *c, int64_t deadline, FpMess
             return -1;
         }
 
+        /* Accept only the configured server address and port to prevent interference from other UDP traffic. */
         /* 只接受配置的服务端地址和端口，避免其他 UDP 数据干扰 */
         if (from.sin_addr.s_addr != c->server.sin_addr.s_addr ||
             from.sin_port != c->server.sin_port) {
@@ -293,6 +313,7 @@ static int is_matching_monitor_event(const FpMessage *m, const FpMessage *reques
            m->client_id == request->client_id && m->request_id == request->request_id;
 }
 
+/* Corresponds to sendWithRetry: reuse identical bytes for every attempt, including clientId/requestId/body. */
 /* 对应 sendWithRetry：每次重发使用完全相同的字节（同一 clientId/requestId/body） */
 static FcStatus send_with_retry(FlightClient *c, const FpMessage *request, FpMessage *reply) {
     uint8_t encoded[FP_MAX_DATAGRAM_LENGTH];
@@ -316,6 +337,7 @@ static FcStatus send_with_retry(FlightClient *c, const FpMessage *request, FpMes
                 return FC_ERR_IO;
             }
             if (rc == 0) {
+                /* This attempt timed out; retransmit. */
                 break; /* 本轮超时，重发 */
             }
             if (is_matching_reply(reply, request)) {
@@ -342,9 +364,11 @@ static FcStatus invoke(FlightClient *c, int operation, const FpWriter *body,
 }
 
 /* ------------------------------------------------------------------ */
+/* Reply acknowledgement and parsing. */
 /* 回复确认与解析                                                      */
 /* ------------------------------------------------------------------ */
 
+/* ACK only enables early cache cleanup; send failure does not change the result, and the server retains its 60-second TTL. */
 /* 确认只帮助服务端提前清理缓存；发送失败不改变已取得的结果，服务端仍有 60 秒 TTL 兜底 */
 static void send_acknowledgement(FlightClient *c, const FpMessage *reply) {
     FpMessage ack;
@@ -364,6 +388,7 @@ static void send_acknowledgement(FlightClient *c, const FpMessage *reply) {
     }
 }
 
+/* Return a protocol error if the reader fails. */
 /* 遇到 reader 出错就返回协议错误 */
 #define RETURN_IF_READER_FAILED(c, r)                                                      \
     do {                                                                                   \
@@ -373,9 +398,13 @@ static void send_acknowledgement(FlightClient *c, const FpMessage *reply) {
     } while (0)
 
 /*
+ * Corresponds to successReader: read status and, on success, leave the reader immediately after it.
  * 对应 successReader：读 status；成功则把 reader 停在 status 之后；
+ * For a business error, parse the explanation and return FC_ERR_SERVER.
  * 业务错误则解析错误说明并返回 FC_ERR_SERVER。
+ * The protocol acknowledges only successful replies with status=0; error replies receive no ACK.
  * 协议规定：只确认 status=0 的成功回复，错误回复不发送 ACK
+ * Their cache entries are cleared by the server's 60-second TTL or a subsequent higher-numbered request.
  * （其缓存由服务端 60 秒 TTL 或后续更高编号的请求清理）。
  */
 static FcStatus success_reader(FlightClient *c, const FpMessage *reply, FpReader *reader) {
@@ -389,6 +418,7 @@ static FcStatus success_reader(FlightClient *c, const FpMessage *reply, FpReader
         return FC_OK;
     }
 
+    /* Error replies may contain only status, a u16 length, and at most 512 bytes of explanation. */
     /* 错误回复只能包含 status、u16 长度和最多 512 字节的说明 */
     if (status > FP_STATUS_STALE_REQUEST ||
         reply->body_length > 1 + 2 + FP_MAX_ERROR_TEXT_LENGTH) {
@@ -398,6 +428,7 @@ static FcStatus success_reader(FlightClient *c, const FpMessage *reply, FpReader
     fp_require_fully_read(reader);
     RETURN_IF_READER_FAILED(c, *reader);
 
+    /* STALE_REQUEST does not prove failure; report that the execution outcome is unknown. */
     /* STALE_REQUEST 不能解释为"操作一定失败"，必须说明执行结果未知 */
     if (status == FP_STATUS_STALE_REQUEST) {
         return fail(c, FC_ERR_SERVER,
@@ -438,6 +469,7 @@ static FcStatus read_seat_result(FlightClient *c, const FpMessage *reply,
 }
 
 /* ------------------------------------------------------------------ */
+/* Business operations. */
 /* 业务操作                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -459,6 +491,7 @@ FcStatus fc_query_route(FlightClient *c, const char *source, const char *destina
         fp_write_string(&w, destination);
         fp_write_u32(&w, offset);
 
+        /* Each page uses a new request ID, incremented inside invoke. */
         /* 每一页都是一个新的请求编号（invoke 内部递增） */
         st = invoke(c, FP_OP_ROUTE, &w, &reply);
         if (st != FC_OK) {
@@ -621,11 +654,14 @@ FcStatus fc_set_fare(FlightClient *c, int32_t flight_id, float new_fare, float *
 }
 
 /* ------------------------------------------------------------------ */
+/* Monitoring. */
 /* 监控                                                                */
 /* ------------------------------------------------------------------ */
 
 /*
+ * Parse and deliver a seat event, returning the updated highest received sequence number.
  * 解析并投递一个座位事件，返回更新后的"已接收最大序号"。
+ * Log and ignore invalid, duplicate, or stale events.
  * 非法事件或重复/旧事件只打印日志并忽略。
  */
 static uint32_t deliver_monitor_event(const FpMessage *message, int32_t expected_flight_id,
@@ -686,7 +722,9 @@ FcStatus fc_monitor_flight(FlightClient *c, int32_t flight_id, int64_t interval_
     length = fp_encode(&request, encoded);
 
     /*
+     * Enter monitoring receive mode before the first send: registration replies and seat events share one socket.
      * 第一次发送前就进入"监控接收状态"：注册回复和座位事件走同一个 socket。
+     * Events may arrive before a lost registration reply, so process them while waiting for the reply as well.
      * 注册回复丢失时，事件仍可能先到，所以等待回复期间也要处理事件。
      */
     for (attempt = 1; attempt <= MAX_SEND_ATTEMPTS && !have_reply; attempt++) {
@@ -745,6 +783,7 @@ FcStatus fc_monitor_flight(FlightClient *c, int32_t flight_id, int64_t interval_
     if (remaining_millis == 0) {
         return FC_OK;
     }
+    /* Calculate the end time using the local monotonic clock and receive events until it expires. */
     /* 以本地单调时钟计算结束时刻，继续收事件直到期满 */
     monitor_deadline = now_millis() + (int64_t)remaining_millis;
     for (;;) {
@@ -754,6 +793,7 @@ FcStatus fc_monitor_flight(FlightClient *c, int32_t flight_id, int64_t interval_
             return FC_ERR_IO;
         }
         if (rc == 0) {
+            /* The monitoring period has ended. */
             return FC_OK; /* 监控期结束 */
         }
         if (is_matching_monitor_event(&incoming, &request)) {

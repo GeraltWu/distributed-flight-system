@@ -9,7 +9,10 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
-/** 保存至多一次模式所需的最高请求编号和最近一次回复。 */
+/**
+ * Stores the highest request ID and latest reply required by at-most-once semantics.
+ * 保存至多一次模式所需的最高请求编号和最近一次回复。
+ */
 final class ReplyHistory {
     private static final long REPLY_TTL_NANOS = 60_000_000_000L;
 
@@ -36,6 +39,7 @@ final class ReplyHistory {
             return Decision.STALE;
         }
 
+        // Retain the highest ID permanently; after acknowledgement or expiry, the same ID is treated as stale.
         // 最高编号永久保留；缓存被确认或过期后，同编号请求只能判为旧请求。
         if (state.reply == null || state.expiresAtNanos - nowNanos <= 0) {
             state.clearReply();
@@ -112,6 +116,7 @@ final class ReplyHistory {
         byte[] cachedBody = state.reply.body();
         if (cachedBody.length == 0
                 || (cachedBody[0] & 0xff) != Protocol.Status.OK) {
+            // The protocol acknowledges only successful replies; error caches rely on TTL or higher-numbered requests.
             // 协议只确认成功回复；错误缓存依靠 TTL 或更高编号请求清理。
             return false;
         }

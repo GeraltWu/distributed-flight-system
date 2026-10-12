@@ -1,6 +1,9 @@
 package flight.server;
 
-/** 服务端内存中的一条航班记录。 */
+/**
+ * One flight record stored in server memory.
+ * 服务端内存中的一条航班记录。
+ */
 final class Flight {
     private final int id;
     private final String source;

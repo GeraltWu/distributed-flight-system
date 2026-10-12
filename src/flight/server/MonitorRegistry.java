@@ -13,7 +13,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
-/** 保存 MONITOR 登记，并为座位变化生成回调事件。 */
+/**
+ * Stores MONITOR registrations and generates callbacks for seat changes.
+ * 保存 MONITOR 登记，并为座位变化生成回调事件。
+ */
 final class MonitorRegistry {
     private final Map<RegistrationKey, Registration> registrations = new HashMap<>();
 

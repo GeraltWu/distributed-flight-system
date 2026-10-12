@@ -17,7 +17,10 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-/** 负责客户端的 UDP 请求、重传和回复解码。 */
+/**
+ * Handles client UDP requests, retransmissions, and reply decoding.
+ * 负责客户端的 UDP 请求、重传和回复解码。
+ */
 final class FlightClient implements AutoCloseable {
     private static final int RECEIVE_TIMEOUT_MILLIS = 1_000;
     private static final int MAX_SEND_ATTEMPTS = 4;
@@ -231,6 +234,7 @@ final class FlightClient implements AutoCloseable {
             return reader;
         }
 
+        // Error replies may contain only status, a u16 length, and at most 512 bytes of explanation.
         // 错误回复只能包含 status、u16 长度和最多 512 字节的说明。
         if (status > Protocol.Status.STALE_REQUEST
                 || reply.bodyLength() > 1 + 2 + Protocol.MAX_ERROR_TEXT_LENGTH) {
@@ -259,6 +263,7 @@ final class FlightClient implements AutoCloseable {
                 encoded, encoded.length, serverAddress, serverPort);
 
         for (int attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
+            // Every retransmission reuses exactly the same request bytes, including clientId and requestId.
             // 每次重发沿用完全相同的请求字节，包括 clientId 和 requestId。
             socket.send(requestPacket);
             System.out.printf(
@@ -298,6 +303,7 @@ final class FlightClient implements AutoCloseable {
                 return null;
             }
 
+            // Unmatched datagrams do not restart the current reply deadline.
             // 非匹配数据报不会重新开始当前等待计时。
             int remainingMillis = (int) Math.max(
                     1, TimeUnit.NANOSECONDS.toMillis(remainingNanos));
@@ -311,6 +317,7 @@ final class FlightClient implements AutoCloseable {
                 return null;
             }
 
+            // Accept datagrams only from the configured server to prevent unrelated UDP traffic from interfering.
             // 只接受配置的服务端发来的数据报，避免其他 UDP 数据干扰当前请求。
             if (!packet.getAddress().equals(serverAddress) || packet.getPort() != serverPort) {
                 continue;
@@ -382,6 +389,7 @@ final class FlightClient implements AutoCloseable {
         DatagramPacket packet = new DatagramPacket(
                 encoded, encoded.length, serverAddress, serverPort);
         try {
+            // Acknowledgements only allow early server cache cleanup; the 60-second TTL still applies if sending fails.
             // 确认只帮助服务端提前清理缓存；发送失败时仍有 60 秒 TTL 兜底。
             socket.send(packet);
             System.out.println("[ACK] Reply acknowledgement sent.");
@@ -396,7 +404,10 @@ final class FlightClient implements AutoCloseable {
         socket.close();
     }
 
-    /** 客户端解码后的航班详情。 */
+    /**
+     * Flight details decoded by the client.
+     * 客户端解码后的航班详情。
+     */
     static final class FlightDetails {
         private final long departureUtcSeconds;
         private final float fare;

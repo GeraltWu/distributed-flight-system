@@ -7,7 +7,10 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
-/** 为每个 ADD_SEATS 调用确定性地丢弃它的第一次请求或第一次回复。 */
+/**
+ * Deterministically drops the first request or first reply of each ADD_SEATS invocation.
+ * 为每个 ADD_SEATS 调用确定性地丢弃它的第一次请求或第一次回复。
+ */
 final class LossSimulator {
     private enum Mode {
         NONE("none"),
