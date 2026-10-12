@@ -32,7 +32,7 @@ distributed-flight-system/
          └─ FlightClient.java
 ```
 
-`out/` 统一保存编译产物：Java 的 `.class` 文件位于 `out/flight/`，C 客户端可执行文件位于 `out/client_c/`。整个 `out/` 不属于源码目录，已加入 `.gitignore`。
+`out/` 统一保存编译产物：Java 的 `.class` 文件位于 `out/flight/`，C 客户端可执行文件位于 `out/client_c/`。Git 通过 `.gitkeep` 保留 `out/` 和 `out/client_c/` 的目录结构，编译产物由 `.gitignore` 忽略。
 
 ## 目录职责
 

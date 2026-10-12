@@ -1,5 +1,9 @@
 # Java and C build outputs
-/out/
+/out/*
+!/out/.gitkeep
+!/out/client_c/
+/out/client_c/*
+!/out/client_c/.gitkeep
 *.class
 *.o
 *.obj
