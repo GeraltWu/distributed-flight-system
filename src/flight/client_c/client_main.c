@@ -2,7 +2,7 @@
  * client_main.c
  *
  * 控制台入口，对应 Java 的 ClientMain。
- * 用法：./flight_client <server-host> <server-port>
+ * 项目根目录用法：./out/client_c/flight_client <server-host> <server-port>
  */
 #include "flight_client.h"
 
@@ -283,7 +283,7 @@ static void print_menu(void) {
 }
 
 static void print_usage(void) {
-    printf("[USAGE] ./flight_client <server-host> <server-port>\n");
+    printf("[USAGE] out/client_c/flight_client <server-host> <server-port>\n");
 }
 
 static void run_menu(FlightClient *client) {
