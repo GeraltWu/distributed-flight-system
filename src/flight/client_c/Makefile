@@ -1,7 +1,7 @@
-# Run make in this directory; outputs go to the project-root out/ directory.
+# Run make in this directory; outputs go to the project-root out/client_c/ directory.
 CC ?= gcc
 CFLAGS ?= -std=c11 -Wall -Wextra -pedantic -O2
-OUT_DIR := ../../../out
+OUT_DIR := ../../../out/client_c
 ifeq ($(OS),Windows_NT)
 TARGET := $(OUT_DIR)/flight_client.exe
 LDLIBS := -lws2_32

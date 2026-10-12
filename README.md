@@ -32,7 +32,7 @@ distributed-flight-system/
          └─ FlightClient.java
 ```
 
-`out/` 统一保存 Java 的 `.class` 文件和 C 客户端可执行文件，不属于源码目录，已加入 `.gitignore`。
+`out/` 统一保存编译产物：Java 的 `.class` 文件位于 `out/flight/`，C 客户端可执行文件位于 `out/client_c/`。整个 `out/` 不属于源码目录，已加入 `.gitignore`。
 
 ## 目录职责
 
@@ -101,18 +101,18 @@ pacman -S mingw-w64-ucrt-x86_64-gcc
 ```powershell
 gcc --version
 ```
-然后在项目根目录编译运行，输出到 `out/`：
+然后在项目根目录编译运行，输出到 `out/client_c/`：
 ```powershell
-New-Item -ItemType Directory -Force out
-gcc -std=c11 -Wall -Wextra -O2 -o out/flight_client.exe src/flight/client_c/client_main.c src/flight/client_c/flight_client.c src/flight/client_c/flight_protocol.c -lws2_32
-.\out\flight_client.exe <server-host> <server-port>
+New-Item -ItemType Directory -Force out/client_c
+gcc -std=c11 -Wall -Wextra -O2 -o out/client_c/flight_client.exe src/flight/client_c/client_main.c src/flight/client_c/flight_client.c src/flight/client_c/flight_protocol.c -lws2_32
+.\out\client_c\flight_client.exe <server-host> <server-port>
 ```
 
 macOS / Linux 在项目根目录使用 Makefile：
 
 ```bash
 make -C src/flight/client_c
-./out/flight_client 127.0.0.1 5000
+./out/client_c/flight_client 127.0.0.1 5000
 ```
 
 清理 C 编译产物（保留 Java 的 `.class` 文件）：
