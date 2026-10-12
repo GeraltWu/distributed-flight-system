@@ -51,7 +51,7 @@ distributed-flight-system/
 
 ### Java 编译运行
 
-在项目根目录编译和运行。服务端会从相对路径 `data/flights.tsv` 读取数据。Windows PowerShell：
+在项目根目录编译和运行。服务端会从相对路径 `data/flights.tsv` 读取数据。
 
 Windows PowerShell：
 
