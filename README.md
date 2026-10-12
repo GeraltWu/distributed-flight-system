@@ -32,7 +32,7 @@ distributed-flight-system/
          └─ FlightClient.java
 ```
 
-`out/` 用于保存编译生成的 `.class` 文件，不属于源码目录。
+`out/` 统一保存 Java 的 `.class` 文件和 C 客户端可执行文件，不属于源码目录，已加入 `.gitignore`。
 
 ## 目录职责
 
@@ -49,11 +49,22 @@ distributed-flight-system/
 
 ## 编译和运行
 
-在项目根目录使用 PowerShell 编译和运行。服务端会从相对路径 `data/flights.tsv` 读取数据：
+### Java 编译运行
+
+在项目根目录编译和运行。服务端会从相对路径 `data/flights.tsv` 读取数据。Windows PowerShell：
+
+Windows PowerShell：
 
 ```powershell
 New-Item -ItemType Directory -Force out
 javac --release 17 -encoding UTF-8 -d out (Get-ChildItem -Recurse src -Filter *.java).FullName
+```
+
+macOS / Linux：
+
+```bash
+mkdir -p out
+find src -name '*.java' -print0 | xargs -0 javac --release 17 -encoding UTF-8 -d out
 ```
 
 先启动服务端：
@@ -74,7 +85,7 @@ java -cp out flight.client.ClientMain 120.26.249.221 5000
 
 服务端的最后一个参数选择调用语义，客户端命令不变。跨电脑运行时，把 `127.0.0.1` 换成服务端电脑的 IP 地址 `120.26.249.221`。
 
-## C客户端编译运行
+### C客户端编译运行
 打开 https://www.msys2.org ，下载安装程序并安装，路径用默认的 C:\msys64。
 安装完成后，从开始菜单打开 MSYS2 UCRT64，运行：
 ```
@@ -90,10 +101,24 @@ pacman -S mingw-w64-ucrt-x86_64-gcc
 ```powershell
 gcc --version
 ```
-然后进入代码目录编译运行：
+然后在项目根目录编译运行，输出到 `out/`：
 ```powershell
-gcc -std=c11 -o flight_client.exe client_main.c flight_client.c flight_protocol.c -lws2_32
-flight_client.exe <server-host> <server-port>
+New-Item -ItemType Directory -Force out
+gcc -std=c11 -Wall -Wextra -O2 -o out/flight_client.exe src/flight/client_c/client_main.c src/flight/client_c/flight_client.c src/flight/client_c/flight_protocol.c -lws2_32
+.\out\flight_client.exe <server-host> <server-port>
+```
+
+macOS / Linux 在项目根目录使用 Makefile：
+
+```bash
+make -C src/flight/client_c
+./out/flight_client 127.0.0.1 5000
+```
+
+清理 C 编译产物（保留 Java 的 `.class` 文件）：
+
+```bash
+make -C src/flight/client_c clean
 ```
 
 ## 丢包模拟

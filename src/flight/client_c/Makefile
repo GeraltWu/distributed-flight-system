@@ -1,8 +1,23 @@
-# Linux / macOS:  make
-# Windows(MinGW): gcc -std=c11 -o flight_client.exe client_main.c flight_client.c flight_protocol.c -lws2_32
+# Run make in this directory; outputs go to the project-root out/ directory.
 CC ?= gcc
 CFLAGS ?= -std=c11 -Wall -Wextra -pedantic -O2
-flight_client: client_main.c flight_client.c flight_protocol.c flight_client.h flight_protocol.h
-	$(CC) $(CFLAGS) -o $@ client_main.c flight_client.c flight_protocol.c -lm
+OUT_DIR := ../../../out
+ifeq ($(OS),Windows_NT)
+TARGET := $(OUT_DIR)/flight_client.exe
+LDLIBS := -lws2_32
+else
+TARGET := $(OUT_DIR)/flight_client
+LDLIBS := -lm
+endif
+
+.PHONY: all clean
+all: $(TARGET)
+
+$(TARGET): client_main.c flight_client.c flight_protocol.c flight_client.h flight_protocol.h | $(OUT_DIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ client_main.c flight_client.c flight_protocol.c $(LDLIBS)
+
+$(OUT_DIR):
+	mkdir -p $@
+
 clean:
-	rm -f flight_client
+	rm -f $(TARGET)

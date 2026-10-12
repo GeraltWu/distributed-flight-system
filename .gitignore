@@ -1,0 +1,13 @@
+# Java and C build outputs
+/out/
+*.class
+*.o
+*.obj
+*.exe
+/src/flight/client_c/flight_client
+
+# macOS metadata
+.DS_Store
+
+# Local VS Code settings
+/.vscode/
