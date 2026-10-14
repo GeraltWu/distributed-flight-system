@@ -1,5 +1,7 @@
 # SC6103 Distributed Flight System
 
+完整现场操作顺序和英文讲稿见 [演示脚本](docs/demo-script_ZH.md)。
+
 English | [简体中文](README_ZH.md)
 
 A UDP-based distributed flight information system implemented in Java. Network messages are encoded and decoded manually according to the [protocol specification](docs/protocol.md), without Java RMI, object serialization, or input/output stream classes for message encoding and decoding.
