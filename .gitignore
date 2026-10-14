@@ -1,14 +1,3 @@
-# Java and C build outputs
-/out/*
-!/out/.gitkeep
-!/out/client_c/
-/out/client_c/*
-!/out/client_c/.gitkeep
-*.class
-*.o
-*.obj
-*.exe
-/src/flight/client_c/flight_client
 
 # macOS metadata
 .DS_Store

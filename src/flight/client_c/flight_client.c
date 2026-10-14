@@ -9,6 +9,8 @@
 #if defined(_WIN32)
 /* Enable rand_s() for clientId generation; this definition must precede <stdlib.h>. */
 #define _CRT_RAND_S /* 提供 rand_s()，用来生成 clientId，必须在 <stdlib.h> 之前 */
+/* GetTickCount64 is available from Windows Vista onward. */
+#define _WIN32_WINNT 0x0600
 #define WIN32_LEAN_AND_MEAN
 #else
 #define _POSIX_C_SOURCE 200809L
