@@ -4,7 +4,7 @@
 
 基于 UDP 的分布式航班信息系统，使用 Java 实现。网络消息按照 [协议文档](docs/protocol_ZH.md) 手动编码和解码，不使用 Java RMI、对象序列化或输入输出流类进行消息编解码。
 
-课堂展示的机器安排、操作顺序和预期结果见 [演示指南](docs/demo-guide_ZH.md)。
+课堂展示的机器安排、操作顺序和预期结果见 [演示指南](docs/demo-guide_ZH.md)；完整现场流程和英文讲稿见 [演示脚本](docs/demo-script_ZH.md)；协议与实现提问复习见 [答辩指南](docs/project-defense-guide_ZH.md)。
 
 ## 项目目录
 

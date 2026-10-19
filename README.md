@@ -1,6 +1,6 @@
 # SC6103 Distributed Flight System
 
-完整现场操作顺序和英文讲稿见 [演示脚本](docs/demo-script_ZH.md)。
+完整现场操作顺序和英文讲稿见 [演示脚本](docs/demo-script_ZH.md)；协议与实现提问复习见 [答辩指南](docs/project-defense-guide_ZH.md)。
 
 English | [简体中文](README_ZH.md)
 
